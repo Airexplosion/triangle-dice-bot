@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import random
 import re
 
+from api.web_client import get_client
 from context.message_context import MessageContext
 from game.chaos import calculate_chaos
 from game.dice import count_successes
@@ -38,7 +40,15 @@ async def handle_post_roll(ctx: MessageContext) -> bool:
 
     result_lines: list[str] = []
 
+    # Track sync data
+    chaos_diff_sync = 0
+    failure_delta_sync = 0
+    apt_consumed_name = ""
+    apt_consumed_n = 0
+
     async def updater(room: RoomState) -> None:
+        nonlocal chaos_diff_sync, failure_delta_sync, apt_consumed_name, apt_consumed_n
+
         player = room.get_player(player_id)
         apt_name = pr.aptitude_name
         apt_value = player.aptitudes.get(apt_name, 0)
@@ -76,20 +86,25 @@ async def handle_post_roll(ctx: MessageContext) -> bool:
 
         # Adjust chaos pool
         room.chaos_pool = max(0, room.chaos_pool + chaos_diff)
+        chaos_diff_sync = chaos_diff
 
         # Failure count adjustments (reality modification only)
         if pr.trigger == "现实修改":
             if pr.failure_incremented and new_successes > 0:
                 room.failure_count = max(0, room.failure_count - 1)
                 pr.failure_incremented = False
+                failure_delta_sync = -1
                 result_lines.append("(成功数恢复，撤销失败计数+1)")
             elif not pr.failure_incremented and old_successes > 0 and new_successes == 0:
                 room.failure_count += 1
                 pr.failure_incremented = True
+                failure_delta_sync = 1
                 result_lines.append("(成功数归零，失败计数+1)")
 
         # Deduct aptitude
         player.aptitudes[apt_name] = apt_value - n
+        apt_consumed_name = apt_name
+        apt_consumed_n = n
 
         # Update pending roll
         pr.current_dice = dice
@@ -104,4 +119,16 @@ async def handle_post_roll(ctx: MessageContext) -> bool:
 
     await store.update_room(room_id, updater)
     await ctx.reply("\n".join(result_lines))
+
+    # Background sync to web (non-blocking)
+    client = get_client()
+    if client and ctx.source_type == "group" and apt_consumed_n > 0:
+        async def _sync():
+            await client.consume_aptitude(player_id, room_id, apt_consumed_name, apt_consumed_n)
+            if chaos_diff_sync != 0:
+                await client.sync_chaos(room_id, chaos_diff_sync, f"骰后修改 {apt_consumed_name}")
+            if failure_delta_sync != 0:
+                await client.sync_failure(room_id, failure_delta_sync)
+        asyncio.create_task(_sync())
+
     return True

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import re
 
+from api.web_client import get_client
 from context.message_context import MessageContext
 from game.models import RoomState
 from storage.json_store import store
@@ -163,17 +165,27 @@ async def _handle_chaos_modify(ctx: MessageContext, match: re.Match) -> bool:
     n = int(match.group(2))
     room_id = ctx.room_id
     result_lines: list[str] = []
+    sync_delta = 0
 
     def updater(room: RoomState) -> None:
+        nonlocal sync_delta
         old = room.chaos_pool
         if action == "增加":
             room.chaos_pool += n
+            sync_delta = n
         else:
             room.chaos_pool = max(0, room.chaos_pool - n)
+            sync_delta = room.chaos_pool - old
         result_lines.append(f"混沌池: {old} → {room.chaos_pool}")
 
     await store.update_room(room_id, updater)
     await ctx.reply("\n".join(result_lines))
+
+    # Background sync
+    client = get_client()
+    if client and ctx.source_type == "group" and sync_delta != 0:
+        asyncio.create_task(client.sync_chaos(room_id, sync_delta, f"管理员手动{action}"))
+
     return True
 
 
@@ -190,15 +202,25 @@ async def _handle_failure_modify(ctx: MessageContext, match: re.Match) -> bool:
     n = int(match.group(2))
     room_id = ctx.room_id
     result_lines: list[str] = []
+    sync_delta = 0
 
     def updater(room: RoomState) -> None:
+        nonlocal sync_delta
         old = room.failure_count
         if action == "增加":
             room.failure_count += n
+            sync_delta = n
         else:
             room.failure_count = max(0, room.failure_count - n)
+            sync_delta = room.failure_count - old
         result_lines.append(f"失败计数: {old} → {room.failure_count}")
 
     await store.update_room(room_id, updater)
     await ctx.reply("\n".join(result_lines))
+
+    # Background sync
+    client = get_client()
+    if client and ctx.source_type == "group" and sync_delta != 0:
+        asyncio.create_task(client.sync_failure(room_id, sync_delta))
+
     return True

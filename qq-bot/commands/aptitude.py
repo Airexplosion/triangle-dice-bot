@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import re
 
+from api.web_client import get_client
 from context.message_context import MessageContext
 from game.models import APTITUDE_SET, RoomState
 from storage.json_store import store
@@ -51,4 +53,12 @@ async def handle_aptitude(ctx: MessageContext) -> bool:
 
     await store.update_room(room_id, updater)
     await ctx.reply("\n".join(result_lines))
+
+    # Background sync to web (non-blocking)
+    client = get_client()
+    if client and ctx.source_type == "group":
+        async def _sync():
+            await client.set_aptitudes(player_id, room_id, updates)
+        asyncio.create_task(_sync())
+
     return True

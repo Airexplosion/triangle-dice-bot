@@ -5,6 +5,8 @@ from commands.roll import handle_roll
 from commands.post_roll import handle_post_roll
 from commands.aptitude import handle_aptitude
 from commands.admin import handle_admin
+from commands.bind import handle_bind_user, handle_bind_mission
+from commands.query import handle_query
 
 HELP_TEXT = """\
 【三角机构骰点系统 - 帮助】
@@ -31,6 +33,17 @@ HELP_TEXT = """\
   申请管理        申请成为管理员
   同意管理        批准管理员申请
 
+◆ 角色卡系统
+  绑定 <绑定码>       绑定QQ到角色卡系统
+  绑定任务 <绑定码>   群绑定到任务(管理员)
+  查询状态            查看角色信息
+  查询嘉奖            查看嘉奖/处分
+  查询物品            查看物品列表
+  查询物品 <物品名>   查看物品详情
+  查询角色            查看所有角色
+  切换角色 <名称/序号> 切换活跃角色
+  查询绑定            查看绑定状态
+
 ◆ 九种资质
   专注 欺瞒 活力 共情 主动
   坚毅 气场 专业 诡秘\
@@ -46,6 +59,9 @@ async def handle_help(ctx: MessageContext) -> bool:
 
 HANDLERS = [
     handle_help,
+    handle_bind_user,
+    handle_bind_mission,
+    handle_query,
     handle_roll,
     handle_post_roll,
     handle_aptitude,

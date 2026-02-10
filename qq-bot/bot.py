@@ -6,12 +6,14 @@ from botpy.message import C2CMessage, GroupMessage, Message
 
 sys.path.insert(0, os.path.dirname(__file__))
 
+from api.web_client import init_client
 from commands import dispatch
 from context.message_context import MessageContext
 
 
 class MyBot(botpy.Client):
     async def on_ready(self):
+        init_client()
         botpy.logger.info("Bot is ready!")
 
     async def on_at_message_create(self, message: Message):

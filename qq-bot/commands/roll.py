@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import re
 
+from api.mapping import web_attrs_to_bot
+from api.web_client import get_client
 from context.message_context import MessageContext
 from game.chaos import calculate_chaos
 from game.dice import apply_burnout, count_successes, count_non_successes, roll_6d4
@@ -54,10 +57,38 @@ async def handle_roll(ctx: MessageContext) -> bool:
     player_id = ctx.player_id
     is_reality = trigger == "现实修改"
 
+    # Check if user is bound and fetch web aptitudes
+    client = get_client()
+    web_aptitudes: dict[str, int] | None = None
+    offline_mode = False
+
+    if client and ctx.source_type == "group":
+        apt_result = await client.get_aptitudes(player_id, room_id)
+        if apt_result and apt_result.get("success"):
+            web_aptitudes = web_attrs_to_bot(apt_result.get("attrs", {}))
+        elif apt_result is not None:
+            # Got a response but not success — user may not be bound, use local
+            offline_mode = False
+        else:
+            # Network failure
+            offline_mode = True
+
     result_lines: list[str] = []
 
+    # Track chaos/failure deltas for background sync
+    chaos_delta = 0
+    failure_delta = 0
+
     async def updater(room: RoomState) -> None:
+        nonlocal chaos_delta, failure_delta
+
         player = room.get_player(player_id)
+
+        # Override local aptitudes with web data if available
+        if web_aptitudes is not None:
+            for name, val in web_aptitudes.items():
+                player.aptitudes[name] = val
+
         apt_value = player.aptitudes.get(apt_name, 0)
 
         # Calculate burnout
@@ -91,9 +122,11 @@ async def handle_roll(ctx: MessageContext) -> bool:
         if is_reality and successes == 0:
             room.failure_count += 1
             failure_incremented = True
+            failure_delta = 1
 
         # Apply chaos to pool
         room.chaos_pool += chaos
+        chaos_delta = chaos
 
         # Create pending roll
         pr = PendingRoll(
@@ -108,7 +141,8 @@ async def handle_roll(ctx: MessageContext) -> bool:
         set_pending(room_id, pr)
 
         # Format output
-        result_lines.append(f"【{trigger} - {apt_name}({apt_value})】骰点结果")
+        mode_tag = " (离线模式)" if offline_mode else ""
+        result_lines.append(f"【{trigger} - {apt_name}({apt_value})】骰点结果{mode_tag}")
         result_lines.append(f"6D4 = [{format_dice(raw_dice)}]")
 
         if burnout > 0 or is_reality:
@@ -150,4 +184,14 @@ async def handle_roll(ctx: MessageContext) -> bool:
 
     await store.update_room(room_id, updater)
     await ctx.reply("\n".join(result_lines))
+
+    # Background sync to web (non-blocking)
+    if client and ctx.source_type == "group" and not offline_mode:
+        async def _sync():
+            if chaos_delta != 0:
+                await client.sync_chaos(room_id, chaos_delta, f"{trigger} {apt_name}")
+            if failure_delta != 0:
+                await client.sync_failure(room_id, failure_delta)
+        asyncio.create_task(_sync())
+
     return True
