@@ -28,6 +28,9 @@ class MyBot(botpy.Client):
 
 
 if __name__ == "__main__":
+    from dotenv import load_dotenv
+    load_dotenv()
+
     appid = os.environ.get("BOT_APPID")
     secret = os.environ.get("BOT_SECRET")
 
