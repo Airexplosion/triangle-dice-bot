@@ -1,0 +1,2 @@
+appid: "${BOT_APPID}"
+secret: "${BOT_SECRET}"
