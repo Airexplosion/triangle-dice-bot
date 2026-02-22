@@ -12,6 +12,27 @@ from storage.json_store import store
 _pending_applications: dict[str, str] = {}
 
 
+async def _sync_from_web(room_id: str) -> None:
+    """Fetch latest mission values from web and update local state."""
+    client = get_client()
+    if not client:
+        return
+    detail = await client.get_mission_detail(room_id)
+    if not detail or not detail.get("success") or not detail.get("mission"):
+        return
+    m = detail["mission"]
+    web_chaos = m.get("chaosValue", 0)
+    web_failure = m.get("failureCount", 0)
+    web_scatter = m.get("scatterValue", 0)
+
+    def updater(room: RoomState) -> None:
+        room.chaos_pool = web_chaos
+        room.failure_count = web_failure
+        room.scatter_value = web_scatter
+
+    await store.update_room(room_id, updater)
+
+
 async def _check_admin(ctx: MessageContext) -> bool:
     """Check if user is admin. Returns True if admin."""
     if ctx.source_type == "guild":
@@ -28,10 +49,10 @@ async def handle_admin(ctx: MessageContext) -> bool:
     """Handle admin commands. Returns True if handled."""
     content = ctx.content
 
-    if content == "注册管理":
+    if content.startswith("注册管理"):
         return await _handle_register_admin(ctx)
 
-    if content == "申请管理":
+    if content.startswith("申请管理"):
         return await _handle_apply_admin(ctx)
 
     if content == "同意管理":
@@ -62,6 +83,32 @@ async def _handle_register_admin(ctx: MessageContext) -> bool:
 
     room_id = ctx.room_id
     player_id = ctx.player_id
+    content = ctx.content
+
+    # Check if "不使用" mode (standalone, no web verification)
+    standalone = content.strip().endswith("不使用")
+
+    if not standalone:
+        # Web-verified mode: check if user is bound and has manager role
+        client = get_client()
+        if client:
+            role_result = await client.check_manager_role(player_id)
+            if role_result and role_result.get("success"):
+                if not role_result.get("bound"):
+                    await ctx.reply(
+                        "您尚未绑定网页账号。\n"
+                        "请先用「绑定 <绑定码>」绑定账号，\n"
+                        "或用「注册管理 不使用」跳过网页验证。"
+                    )
+                    return True
+                if not role_result.get("isManager"):
+                    await ctx.reply("您的网页账号不是经理角色，无法注册管理员。\n如需跳过验证，请使用「注册管理 不使用」。")
+                    return True
+                # Verified manager — proceed to register
+            elif role_result is None:
+                await ctx.reply("无法连接角色卡系统，请稍后重试或使用「注册管理 不使用」。")
+                return True
+
     result_lines: list[str] = []
 
     def updater(room: RoomState) -> None:
@@ -86,6 +133,28 @@ async def _handle_apply_admin(ctx: MessageContext) -> bool:
     if ctx.source_type == "guild":
         await ctx.reply("频道中管理员由角色决定，无需申请。")
         return True
+
+    content = ctx.content
+    standalone = content.strip().endswith("不使用")
+
+    if not standalone:
+        client = get_client()
+        if client:
+            role_result = await client.check_manager_role(ctx.player_id)
+            if role_result and role_result.get("success"):
+                if not role_result.get("bound"):
+                    await ctx.reply(
+                        "您尚未绑定网页账号。\n"
+                        "请先用「绑定 <绑定码>」绑定账号，\n"
+                        "或用「申请管理 不使用」跳过网页验证。"
+                    )
+                    return True
+                if not role_result.get("isManager"):
+                    await ctx.reply("您的网页账号不是经理角色，无法申请管理员。\n如需跳过验证，请使用「申请管理 不使用」。")
+                    return True
+            elif role_result is None:
+                await ctx.reply("无法连接角色卡系统，请稍后重试或使用「申请管理 不使用」。")
+                return True
 
     room = await store.load_room(ctx.room_id)
 
@@ -142,11 +211,16 @@ async def _handle_task_attrs(ctx: MessageContext) -> bool:
         await ctx.reply("需要管理员权限。")
         return True
 
+    # 从网页拉取最新数值
+    if ctx.source_type == "group":
+        await _sync_from_web(ctx.room_id)
+
     room = await store.load_room(ctx.room_id)
     lines = [
         "【任务属性】",
         f"混沌池: {room.chaos_pool}",
-        f"失败计数: {room.failure_count}",
+        f"燃尽计数: {room.failure_count}",
+        f"散逸端: {room.scatter_value}",
     ]
     await ctx.reply("\n".join(lines))
     return True
@@ -166,6 +240,10 @@ async def _handle_chaos_modify(ctx: MessageContext, match: re.Match) -> bool:
     room_id = ctx.room_id
     result_lines: list[str] = []
     sync_delta = 0
+
+    # 修改前先从网页同步最新值
+    if ctx.source_type == "group":
+        await _sync_from_web(room_id)
 
     def updater(room: RoomState) -> None:
         nonlocal sync_delta
@@ -204,6 +282,10 @@ async def _handle_failure_modify(ctx: MessageContext, match: re.Match) -> bool:
     result_lines: list[str] = []
     sync_delta = 0
 
+    # 修改前先从网页同步最新值
+    if ctx.source_type == "group":
+        await _sync_from_web(room_id)
+
     def updater(room: RoomState) -> None:
         nonlocal sync_delta
         old = room.failure_count
@@ -213,7 +295,7 @@ async def _handle_failure_modify(ctx: MessageContext, match: re.Match) -> bool:
         else:
             room.failure_count = max(0, room.failure_count - n)
             sync_delta = room.failure_count - old
-        result_lines.append(f"失败计数: {old} → {room.failure_count}")
+        result_lines.append(f"燃尽计数: {old} → {room.failure_count}")
 
     await store.update_room(room_id, updater)
     await ctx.reply("\n".join(result_lines))

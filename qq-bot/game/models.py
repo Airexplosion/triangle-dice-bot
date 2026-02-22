@@ -37,21 +37,45 @@ class RoomState:
     room_id: str
     chaos_pool: int = 0
     failure_count: int = 0
+    scatter_value: int = 0
     players: dict[str, PlayerState] = field(default_factory=dict)
     admins: list[str] = field(default_factory=list)
+    mission_active: bool = False
+    mission_id: str | None = None
+    mission_name: str | None = None
+    mission_members: list[str] = field(default_factory=list)
 
     def get_player(self, player_id: str) -> PlayerState:
         if player_id not in self.players:
             self.players[player_id] = PlayerState(player_id=player_id)
         return self.players[player_id]
 
+    def is_mission_member(self, player_id: str) -> bool:
+        """Check if player contributes to chaos/failure counters.
+
+        Returns True when:
+        - No mission is active (free mode)
+        - Mission is active but member list is empty (independent mode)
+        - Player is in the mission member list
+        """
+        if not self.mission_active:
+            return True
+        if not self.mission_members:
+            return True
+        return player_id in self.mission_members
+
     def to_dict(self) -> dict:
         return {
             "room_id": self.room_id,
             "chaos_pool": self.chaos_pool,
             "failure_count": self.failure_count,
+            "scatter_value": self.scatter_value,
             "players": {pid: p.to_dict() for pid, p in self.players.items()},
             "admins": list(self.admins),
+            "mission_active": self.mission_active,
+            "mission_id": self.mission_id,
+            "mission_name": self.mission_name,
+            "mission_members": list(self.mission_members),
         }
 
     @staticmethod
@@ -63,8 +87,13 @@ class RoomState:
             room_id=data["room_id"],
             chaos_pool=data.get("chaos_pool", 0),
             failure_count=data.get("failure_count", 0),
+            scatter_value=data.get("scatter_value", 0),
             players=players,
             admins=data.get("admins", []),
+            mission_active=data.get("mission_active", False),
+            mission_id=data.get("mission_id"),
+            mission_name=data.get("mission_name"),
+            mission_members=data.get("mission_members", []),
         )
 
 

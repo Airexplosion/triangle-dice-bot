@@ -38,6 +38,12 @@ async def handle_post_roll(ctx: MessageContext) -> bool:
         await ctx.reply("没有待修改的骰点结果（可能已过期或未骰点）。")
         return True
 
+    # Sync latest values from web before modification
+    client = get_client()
+    if client and ctx.source_type == "group":
+        from commands.admin import _sync_from_web
+        await _sync_from_web(room_id)
+
     result_lines: list[str] = []
 
     # Track sync data
@@ -56,6 +62,9 @@ async def handle_post_roll(ctx: MessageContext) -> bool:
         if apt_value < n:
             result_lines.append(f"资质 {apt_name} 不足: 当前{apt_value}，需要{n}")
             return
+
+        # Check mission membership
+        is_member = room.is_mission_member(player_id)
 
         old_successes = count_successes(pr.current_dice)
         old_chaos = pr.chaos_applied
@@ -84,22 +93,25 @@ async def handle_post_roll(ctx: MessageContext) -> bool:
         new_chaos = calculate_chaos(dice, pr.unconsumed_burnout)
         chaos_diff = new_chaos - old_chaos
 
-        # Adjust chaos pool
-        room.chaos_pool = max(0, room.chaos_pool + chaos_diff)
-        chaos_diff_sync = chaos_diff
+        if is_member:
+            # Adjust chaos pool
+            room.chaos_pool = max(0, room.chaos_pool + chaos_diff)
+            chaos_diff_sync = chaos_diff
 
-        # Failure count adjustments (reality modification only)
-        if pr.trigger == "现实修改":
-            if pr.failure_incremented and new_successes > 0:
-                room.failure_count = max(0, room.failure_count - 1)
-                pr.failure_incremented = False
-                failure_delta_sync = -1
-                result_lines.append("(成功数恢复，撤销失败计数+1)")
-            elif not pr.failure_incremented and old_successes > 0 and new_successes == 0:
-                room.failure_count += 1
-                pr.failure_incremented = True
-                failure_delta_sync = 1
-                result_lines.append("(成功数归零，失败计数+1)")
+            # Failure count adjustments (reality modification only)
+            if pr.trigger == "现实修改":
+                if pr.failure_incremented and new_successes > 0:
+                    room.failure_count = max(0, room.failure_count - 1)
+                    pr.failure_incremented = False
+                    failure_delta_sync = -1
+                    result_lines.append("(成功数恢复，撤销失败计数+1)")
+                elif not pr.failure_incremented and old_successes > 0 and new_successes == 0:
+                    room.failure_count += 1
+                    pr.failure_incremented = True
+                    failure_delta_sync = 1
+                    result_lines.append("(成功数归零，失败计数+1)")
+        else:
+            chaos_diff = 0
 
         # Deduct aptitude
         player.aptitudes[apt_name] = apt_value - n
@@ -108,14 +120,18 @@ async def handle_post_roll(ctx: MessageContext) -> bool:
 
         # Update pending roll
         pr.current_dice = dice
-        pr.chaos_applied = new_chaos
+        pr.chaos_applied = new_chaos if is_member else 0
         set_pending(room_id, pr)
 
-        result_lines.insert(0, f"【{action} {n} - {apt_name}({apt_value}→{apt_value - n})】")
+        observer_tag = " (观察模式)" if not is_member else ""
+        result_lines.insert(0, f"【{action} {n} - {apt_name}({apt_value}→{apt_value - n})】{observer_tag}")
         result_lines.append(f"骰子: [{format_dice(dice)}]")
         result_lines.append(f"成功数: {old_successes} → {new_successes}")
-        result_lines.append(f"本次混沌: {old_chaos} → {new_chaos} (差值: {chaos_diff:+d})")
-        result_lines.append(f"混沌池: {room.chaos_pool}")
+        if is_member:
+            result_lines.append(f"本次混沌: {old_chaos} → {new_chaos} (差值: {chaos_diff:+d})")
+            result_lines.append(f"混沌池: {room.chaos_pool}")
+        else:
+            result_lines.append("(观察模式: 不影响混沌池和失败计数)")
 
     await store.update_room(room_id, updater)
     await ctx.reply("\n".join(result_lines))

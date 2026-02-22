@@ -67,11 +67,14 @@ async def handle_roll(ctx: MessageContext) -> bool:
         if apt_result and apt_result.get("success"):
             web_aptitudes = web_attrs_to_bot(apt_result.get("attrs", {}))
         elif apt_result is not None:
-            # Got a response but not success — user may not be bound, use local
             offline_mode = False
         else:
-            # Network failure
             offline_mode = True
+
+        # 骰点前从网页同步最新混沌/燃尽值
+        if not offline_mode:
+            from commands.admin import _sync_from_web
+            await _sync_from_web(room_id)
 
     result_lines: list[str] = []
 
@@ -90,6 +93,9 @@ async def handle_roll(ctx: MessageContext) -> bool:
                 player.aptitudes[name] = val
 
         apt_value = player.aptitudes.get(apt_name, 0)
+
+        # Check mission membership for counter contribution
+        is_member = room.is_mission_member(player_id)
 
         # Calculate burnout
         zero_penalty = 1 if apt_value == 0 else 0
@@ -119,14 +125,19 @@ async def handle_roll(ctx: MessageContext) -> bool:
 
         # Failure check (reality modification only)
         failure_incremented = False
-        if is_reality and successes == 0:
-            room.failure_count += 1
-            failure_incremented = True
-            failure_delta = 1
 
-        # Apply chaos to pool
-        room.chaos_pool += chaos
-        chaos_delta = chaos
+        if is_member:
+            if is_reality and successes == 0:
+                room.failure_count += 1
+                failure_incremented = True
+                failure_delta = 1
+
+            # Apply chaos to pool
+            room.chaos_pool += chaos
+            chaos_delta = chaos
+        else:
+            # Observer mode: dice roll normally but don't affect counters
+            chaos = 0
 
         # Create pending roll
         pr = PendingRoll(
@@ -142,7 +153,8 @@ async def handle_roll(ctx: MessageContext) -> bool:
 
         # Format output
         mode_tag = " (离线模式)" if offline_mode else ""
-        result_lines.append(f"【{trigger} - {apt_name}({apt_value})】骰点结果{mode_tag}")
+        observer_tag = " (观察模式)" if not is_member else ""
+        result_lines.append(f"【{trigger} - {apt_name}({apt_value})】骰点结果{mode_tag}{observer_tag}")
         result_lines.append(f"6D4 = [{format_dice(raw_dice)}]")
 
         if burnout > 0 or is_reality:
@@ -160,7 +172,9 @@ async def handle_roll(ctx: MessageContext) -> bool:
 
         result_lines.append(f"成功数: {successes}")
 
-        if raw_triple:
+        if not is_member:
+            result_lines.append("(观察模式: 不影响混沌池和失败计数)")
+        elif raw_triple:
             # Raw dice triggered triple sublimation
             result_lines.append("★ 三重升华 ★ 本次混沌: 0")
         elif count_successes(burned_dice) == 3:

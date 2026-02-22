@@ -43,7 +43,7 @@ class WebClient:
         try:
             session = await self._get_session()
             async with session.get(f"{self.base_url}{path}", params=params) as resp:
-                if resp.status == 200:
+                if resp.content_type and "json" in resp.content_type:
                     return await resp.json()
                 body = await resp.text()
                 logger.warning("GET %s -> %s: %s", path, resp.status, body)
@@ -56,7 +56,7 @@ class WebClient:
         try:
             session = await self._get_session()
             async with session.post(f"{self.base_url}{path}", json=json) as resp:
-                if resp.status == 200:
+                if resp.content_type and "json" in resp.content_type:
                     return await resp.json()
                 body = await resp.text()
                 logger.warning("POST %s -> %s: %s", path, resp.status, body)
@@ -191,6 +191,68 @@ class WebClient:
         if qq_group_openid:
             params["qqGroupOpenid"] = qq_group_openid
         return await self._get("/api/bot/item-detail", params)
+
+    # ------------------------------------------------------------------
+    # Unbinding
+    # ------------------------------------------------------------------
+
+    async def unbind_user(self, qq_openid: str) -> dict | None:
+        return await self._post("/api/bot/unbind-user", {
+            "qqOpenid": qq_openid,
+        })
+
+    async def unbind_mission(self, qq_group_openid: str) -> dict | None:
+        return await self._post("/api/bot/unbind-mission", {
+            "qqGroupOpenid": qq_group_openid,
+        })
+
+    # ------------------------------------------------------------------
+    # Manager role check
+    # ------------------------------------------------------------------
+
+    async def check_manager_role(self, qq_openid: str) -> dict | None:
+        return await self._get("/api/bot/check-manager-role", {
+            "qqOpenid": qq_openid,
+        })
+
+    # ------------------------------------------------------------------
+    # Mission detail / report
+    # ------------------------------------------------------------------
+
+    async def get_mission_detail(self, qq_group_openid: str) -> dict | None:
+        return await self._get("/api/bot/mission-detail", {
+            "qqGroupOpenid": qq_group_openid,
+        })
+
+    async def get_pending_report(
+        self, qq_openid: str, qq_group_openid: str | None = None
+    ) -> dict | None:
+        params: dict[str, str] = {"qqOpenid": qq_openid}
+        if qq_group_openid:
+            params["qqGroupOpenid"] = qq_group_openid
+        return await self._get("/api/bot/pending-report", params)
+
+    async def agent_response(
+        self,
+        qq_openid: str,
+        qq_group_openid: str | None,
+        action: str,
+        reason: str | None = None,
+    ) -> dict | None:
+        payload: dict[str, Any] = {
+            "qqOpenid": qq_openid,
+            "action": action,
+        }
+        if qq_group_openid:
+            payload["qqGroupOpenid"] = qq_group_openid
+        if reason:
+            payload["reason"] = reason
+        return await self._post("/api/bot/agent-response", payload)
+
+    async def get_report_status(self, qq_group_openid: str) -> dict | None:
+        return await self._get("/api/bot/report-status", {
+            "qqGroupOpenid": qq_group_openid,
+        })
 
 
 # ------------------------------------------------------------------

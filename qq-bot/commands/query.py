@@ -58,6 +58,16 @@ async def _query_status(ctx: MessageContext) -> bool:
         f"嘉奖: {char['commendations']}  处分: {char['reprimands']}",
         f"MVP: {char['mvpCount']}  观察期: {char['probationCount']}",
     ]
+
+    manager_name = char.get("managerName")
+    lines.append(f"管理员: {manager_name or '无'}")
+
+    active_mission = char.get("activeMission")
+    if active_mission:
+        lines.append(f"当前任务: {active_mission.get('name', '未知')}")
+    else:
+        lines.append("当前任务: 未加入任务")
+
     items = char.get("items", [])
     if items:
         lines.append(f"已拥有物品: {len(items)}件")
@@ -114,7 +124,7 @@ async def _query_items(ctx: MessageContext) -> bool:
     for i, item in enumerate(items, 1):
         name = item.get("name") or item.get("item") or "未知物品"
         lines.append(f"  {i}. {name}")
-    lines.append(f"\n共 {len(items)} 件物品。使用[查询物品 <物品名>]查看详情。")
+    lines.append(f"\n共 {len(items)} 件物品。使用[查询物品 <序号或物品名>]查看详情。")
     await ctx.reply("\n".join(lines))
     return True
 
@@ -131,6 +141,19 @@ async def _query_item_detail(ctx: MessageContext) -> bool:
         return True
 
     group_id = ctx.room_id if ctx.source_type == "group" else None
+
+    # Support numeric index: "查询物品 1" → look up item name by index
+    if item_name.isdigit():
+        idx = int(item_name)
+        status = await client.get_character_status(ctx.player_id, group_id)
+        if status and status.get("success"):
+            items = status["character"].get("items", [])
+            if 1 <= idx <= len(items):
+                item_name = items[idx - 1].get("name", item_name)
+            else:
+                await ctx.reply(f"序号超出范围，当前共 {len(items)} 件物品。")
+                return True
+
     result = await client.get_item_detail(ctx.player_id, group_id, item_name)
 
     if not result:
@@ -187,9 +210,13 @@ async def _query_characters(ctx: MessageContext) -> bool:
             markers.append("当前")
         if char.get("isMissionMember"):
             markers.append("任务中")
+        if char.get("missionName"):
+            markers.append(f"📋{char['missionName']}")
         suffix = f" [{'/'.join(markers)}]" if markers else ""
         lines.append(f"  {i}. {char['name']}{suffix}")
-        lines.append(f"     异常:{char['anomaly']} 现实:{char['reality']} 职能:{char['competency']}")
+        manager = char.get("managerName")
+        manager_tag = f" 管理:{manager}" if manager else ""
+        lines.append(f"     异常:{char['anomaly']} 现实:{char['reality']} 职能:{char['competency']}{manager_tag}")
 
     lines.append(f"\n使用[切换角色 <序号或名称>]切换活跃角色。")
     await ctx.reply("\n".join(lines))
