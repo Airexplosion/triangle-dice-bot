@@ -1,0 +1,46 @@
+{
+  "name": "koishi-plugin-triangle-dice",
+  "description": "三角机构骰点系统 — Koishi 插件（移植自 triangle-dice-bot）",
+  "version": "0.1.0",
+  "main": "lib/index.js",
+  "typings": "lib/index.d.ts",
+  "files": [
+    "lib",
+    "src"
+  ],
+  "license": "MIT",
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "keywords": [
+    "chatbot",
+    "koishi",
+    "plugin",
+    "trpg",
+    "dice",
+    "qq",
+    "triangle-agency"
+  ],
+  "koishi": {
+    "description": {
+      "zh-CN": "三角机构骰点系统：6D4 骰点、混沌池、燃尽计数、资质消耗、与角色卡 Web API 联动"
+    },
+    "service": {
+      "required": [
+        "database",
+        "http"
+      ]
+    }
+  },
+  "peerDependencies": {
+    "koishi": "^4.17.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "koishi": "^4.17.7",
+    "typescript": "^5.4.0",
+    "vitest": "^1.6.0"
+  }
+}
