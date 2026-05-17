@@ -7,7 +7,7 @@ import type { PendingRoll } from '../types'
 import { sendQQMarkdown, type QQButton } from '../util/qq-markdown'
 import { getOrCreatePlayer, type RoomStore } from '../service/store'
 import type { PendingRollStore } from '../service/pending'
-import { fireSyncChaos, fireSyncFailure, syncFromWeb } from '../service/sync'
+import { fireDiceRoll, fireSyncChaos, fireSyncFailure, syncFromWeb } from '../service/sync'
 import type { WebClient } from '../service/web-client'
 import { isMissionMember } from '../util/mission'
 
@@ -25,7 +25,42 @@ export function registerRollCommands(ctx: Context, deps: RollDeps): void {
 
   ctx
     .command('异常能力 <aptitude:string>', '使用异常能力触发骰点')
-    .action(async ({ session }, aptitude) => handle(ctx, deps, session, '异常能力', aptitude))
+    .action(async ({ session }, aptitude) => {
+      if (!session) return
+      // 不带参数：优先读角色异常能力列表，渲染"XX：资质"按钮 + 一个"常规异常"fallback
+      if (!aptitude && !session.isDirect && deps.web && session.userId) {
+        const rawRoomId = rawRoomIdOf(session)
+        const resp = await deps.web.getCharacterAnomalies(session.userId, rawRoomId ?? undefined)
+        if (resp?.success && resp.anomalies?.length) {
+          const valid = resp.anomalies.filter((a) => !!a.qualName)
+          if (valid.length) {
+            const buttons: QQButton[][] = []
+            for (let i = 0; i < valid.length; i += 2) {
+              buttons.push(
+                valid.slice(i, i + 2).map((a) => ({
+                  label: `${a.name}：${a.qualName!}`,
+                  // 直接复用 6D4 路径：callback "异常能力 <资质>"
+                  data: `异常能力 ${a.qualName!}`,
+                })),
+              )
+            }
+            buttons.push([{ label: '常规异常', data: '异常能力 __GRID__' }])
+            const head = resp.characterName
+              ? `# 异常能力（${resp.characterName}）\n\n点击触发：`
+              : '# 异常能力\n\n点击触发：'
+            await reply(session, deps, head, buttons)
+            return
+          }
+        }
+        // 没绑卡 / 没异常 / 全部 qualName=null → 退回 9 资质九宫格
+      }
+      // "常规异常"按钮：显式落到九宫格
+      if (aptitude === '__GRID__') {
+        await reply(session, deps, `# 异常能力\n\n请选择资质：`, buildAptitudeGrid('异常能力'))
+        return
+      }
+      return handle(ctx, deps, session, '异常能力', aptitude)
+    })
 }
 
 type Trigger = '现实修改' | '异常能力'
@@ -173,6 +208,15 @@ async function handle(
     fireSyncChaos(deps.web, session, r.chaos, `${r.trigger} ${r.aptName}`)
     if (r.failureIncremented) fireSyncFailure(deps.web, session, 1)
   }
+  // 把骰子结果推到 web 画板（mission-panel / sheet-v2 通过 socket 收到）
+  fireDiceRoll(
+    deps.web,
+    session,
+    `${r.trigger} ${r.aptName}`,
+    `${r.successes}个3`,
+    r.burnedDice,
+    'check',
+  )
 
   const md = renderRollResult(r)
   const buttons = renderRollButtons(r)

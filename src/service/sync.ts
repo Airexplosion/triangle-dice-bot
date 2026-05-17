@@ -88,3 +88,22 @@ export function fireSetAptitudes(
   const groupId = rawRoomIdOf(session) ?? null
   void web.setAptitudes(userId, groupId, aptitudes)
 }
+
+/**
+ * 把骰子结果推到 web 画板。fire-and-forget。
+ * 与现有 dice:roll socket payload 同 schema：web 端 mission-panel 和 sheet-v2 无需改。
+ */
+export function fireDiceRoll(
+  web: WebClient | null,
+  session: Session,
+  label: string,
+  total: number | string,
+  results: number[],
+  type: 'check' | 'normal',
+): void {
+  if (!web || session.isDirect) return
+  const groupId = rawRoomIdOf(session)
+  if (!groupId) return
+  const userId = session.userId ?? null
+  void web.diceRoll(groupId, userId, label, total, results, type)
+}

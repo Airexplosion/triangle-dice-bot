@@ -214,6 +214,42 @@ export class WebClient {
   getReportStatus(qqGroupOpenid: string): Promise<ReportStatusResp | null> {
     return this.getJson('/api/bot/report-status', { qqGroupOpenid })
   }
+
+  // ─── Dice + Anomalies (reborndevfenUI 新增) ────────────────────
+
+  /**
+   * 把骰子结果推到 web 画板。web 端 mission-panel / sheet-v2 通过 socket 'dice:roll' 接收。
+   */
+  diceRoll(
+    qqGroupOpenid: string,
+    qqOpenid: string | null,
+    label: string,
+    total: number | string,
+    results: number[],
+    type: 'check' | 'normal',
+    charNameFallback?: string,
+  ): Promise<{ success: boolean; missionId?: number; charName?: string; error?: string } | null> {
+    return this.postJson('/api/bot/dice-roll', {
+      qqGroupOpenid,
+      qqOpenid,
+      label,
+      total,
+      results,
+      type,
+      charNameFallback,
+    })
+  }
+
+  /**
+   * 拿当前角色的异常能力列表 + 每个异常对应的 9 资质。
+   * qualName 为 null 表示资质字段不是 9 资质之一 → koishi 端应当跳过 / 走"常规异常"。
+   */
+  getCharacterAnomalies(
+    qqOpenid: string,
+    qqGroupOpenid?: string,
+  ): Promise<CharacterAnomaliesResp | null> {
+    return this.getJson('/api/bot/character-anomalies', { qqOpenid, qqGroupOpenid })
+  }
 }
 
 // ─── Internal helpers ────────────────────────────────────────────
@@ -421,5 +457,18 @@ export interface ReportStatusResp {
   appealingCount?: number
   acceptedCount?: number
   allAccepted: boolean
+  error?: string
+}
+
+export interface CharacterAnomaliesResp {
+  success: boolean
+  characterId?: string | number
+  characterName?: string
+  anomalies?: Array<{
+    name: string
+    qualName: string | null
+    trigger: string | null
+    trained: boolean
+  }>
   error?: string
 }

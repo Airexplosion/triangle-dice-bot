@@ -6,6 +6,7 @@ import type { PendingRollStore } from '../service/pending'
 import { getOrCreatePlayer, type RoomStore } from '../service/store'
 import {
   fireConsumeAptitude,
+  fireDiceRoll,
   fireSetAptitudes,
   fireSyncChaos,
   fireSyncFailure,
@@ -261,6 +262,15 @@ async function handle(
       fireSyncFailure(deps.web, session, 1)
     }
   }
+  // 把修正后的骰子结果再推一次到 web 画板
+  fireDiceRoll(
+    deps.web,
+    session,
+    `骰后修改 ${o.aptName}`,
+    `${o.newSuccesses}个3`,
+    o.newDice,
+    'check',
+  )
 
   const md = renderPostRoll(o)
   const buttons = renderPostRollButtons(o)
