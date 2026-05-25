@@ -136,6 +136,13 @@ export class WebClient {
     return this.postJson('/api/bot/sync-failure', { qqGroupOpenid, delta })
   }
 
+  syncScatter(
+    qqGroupOpenid: string,
+    delta: number,
+  ): Promise<{ success: boolean; scatterValue: number } | null> {
+    return this.postJson('/api/bot/sync-scatter', { qqGroupOpenid, delta })
+  }
+
   // ─── Queries ───────────────────────────────────────────────────
 
   getCharacterStatus(

@@ -1,7 +1,12 @@
 import type { Context, Session } from 'koishi'
 import { rawRoomIdOf, roomIdOf } from '../room'
 import type { RoomStore } from '../service/store'
-import { fireSyncChaos, fireSyncFailure, syncFromWeb } from '../service/sync'
+import {
+  fireSyncChaos,
+  fireSyncFailure,
+  fireSyncScatter,
+  syncFromWeb,
+} from '../service/sync'
 import type { WebClient } from '../service/web-client'
 import type { RoomState } from '../types'
 import { isAdmin, isQQGuildChannel } from '../util/auth'
@@ -34,6 +39,10 @@ export function registerAdminCommands(ctx: Context, deps: AdminDeps): void {
           { label: '失败增加', data: '失败增加 ', type: 'input' },
           { label: '失败减少', data: '失败减少 ', type: 'input' },
         ],
+        [
+          { label: '散逸增加', data: '散逸增加 ', type: 'input' },
+          { label: '散逸减少', data: '散逸减少 ', type: 'input' },
+        ],
       ]
       await reply(session, deps, md, buttons)
     })
@@ -60,6 +69,18 @@ export function registerAdminCommands(ctx: Context, deps: AdminDeps): void {
     .command('失败减少 <n:posint>', '管理员：减少燃尽计数')
     .action(async ({ session }, n) =>
       modifyCounter(deps, session, '失败', '减少', n),
+    )
+
+  ctx
+    .command('散逸增加 <n:posint>', '管理员：增加散逸端')
+    .action(async ({ session }, n) =>
+      modifyCounter(deps, session, '散逸', '增加', n),
+    )
+
+  ctx
+    .command('散逸减少 <n:posint>', '管理员：减少散逸端')
+    .action(async ({ session }, n) =>
+      modifyCounter(deps, session, '散逸', '减少', n),
     )
 
   ctx
@@ -96,7 +117,7 @@ function renderTaskAttrs(rs: RoomState): string {
 async function modifyCounter(
   deps: AdminDeps,
   session: Session | undefined,
-  field: '混沌' | '失败',
+  field: '混沌' | '失败' | '散逸',
   action: '增加' | '减少',
   n: number | undefined,
 ): Promise<void> {
@@ -109,7 +130,11 @@ async function modifyCounter(
   const ids = ensureRoomIds(session)
   if (!ids) return reply(session, deps, '> 无法定位房间。')
 
-  const room = await deps.rooms.getOrCreate(ids.roomId, session.platform, ids.rawRoomId)
+  const room = await deps.rooms.getOrCreate(
+    ids.roomId,
+    session.platform,
+    ids.rawRoomId,
+  )
   if (!isAdmin(session, room)) {
     return reply(session, deps, '> 需要管理员权限。')
   }
@@ -122,13 +147,19 @@ async function modifyCounter(
   await deps.rooms.update(ids.roomId, session.platform, ids.rawRoomId, (r) => {
     if (field === '混沌') {
       oldVal = r.chaosPool
-      r.chaosPool = action === '增加' ? r.chaosPool + n : Math.max(0, r.chaosPool - n)
+      r.chaosPool =
+        action === '增加' ? r.chaosPool + n : Math.max(0, r.chaosPool - n)
       newVal = r.chaosPool
-    } else {
+    } else if (field === '失败') {
       oldVal = r.failureCount
       r.failureCount =
         action === '增加' ? r.failureCount + n : Math.max(0, r.failureCount - n)
       newVal = r.failureCount
+    } else {
+      oldVal = r.scatterValue
+      r.scatterValue =
+        action === '增加' ? r.scatterValue + n : Math.max(0, r.scatterValue - n)
+      newVal = r.scatterValue
     }
   })
 
@@ -136,12 +167,19 @@ async function modifyCounter(
   const realDelta = newVal - oldVal
   if (field === '混沌') {
     fireSyncChaos(deps.web, session, realDelta, `管理员手动${action}`)
-  } else {
+  } else if (field === '失败') {
     fireSyncFailure(deps.web, session, realDelta)
+  } else {
+    fireSyncScatter(deps.web, session, realDelta)
   }
 
-  const label = field === '混沌' ? '混沌池' : '燃尽计数'
-  const md = ['# ' + (field + action), '', `${label}　**${oldVal} → ${newVal}**`].join('\n')
+  const label =
+    field === '混沌' ? '混沌池' : field === '失败' ? '燃尽计数' : '散逸端'
+  const md = [
+    '# ' + (field + action),
+    '',
+    `${label}　**${oldVal} → ${newVal}**`,
+  ].join('\n')
   // 增减按钮 type='input'（点了填输入框等用户补数字）；[任务属性] 默认 callback（按了直接处理）
   const buttons: QQButton[][] = [
     [
@@ -151,6 +189,10 @@ async function modifyCounter(
     [
       { label: '失败增加', data: '失败增加 ', primary: field === '失败', type: 'input' },
       { label: '失败减少', data: '失败减少 ', type: 'input' },
+    ],
+    [
+      { label: '散逸增加', data: '散逸增加 ', primary: field === '散逸', type: 'input' },
+      { label: '散逸减少', data: '散逸减少 ', type: 'input' },
     ],
     [{ label: '任务属性', data: '任务属性' }],
   ]

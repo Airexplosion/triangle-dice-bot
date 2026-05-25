@@ -64,6 +64,17 @@ export function fireSyncFailure(
   void web.syncFailure(groupId, delta)
 }
 
+export function fireSyncScatter(
+  web: WebClient | null,
+  session: Session,
+  delta: number,
+): void {
+  if (!web || session.isDirect || delta === 0) return
+  const groupId = rawRoomIdOf(session)
+  if (!groupId) return
+  void web.syncScatter(groupId, delta)
+}
+
 export function fireConsumeAptitude(
   web: WebClient | null,
   session: Session,
