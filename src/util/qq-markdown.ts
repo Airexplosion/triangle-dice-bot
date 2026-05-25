@@ -168,13 +168,22 @@ export async function sendQQMarkdown(
     const err = e as { response?: { status?: number; data?: unknown }; message?: string }
     const ctxApp = (session as unknown as { app?: { logger?: (n: string) => { warn: (m: string, ...a: unknown[]) => void } } }).app
     ctxApp?.logger?.('triangle:qq-md').warn(
-      'send-md failed: status=%s body=%j msg=%s payload=%j',
+      'send-md failed: status=%s body=%j msg=%s — fallback to plain text',
       err.response?.status,
       err.response?.data,
       err.message,
-      payload,
     )
-    throw e
+    // 降级 1：尝试用 satori 普通 send 发 plain text（不带 markdown / 按钮）
+    try {
+      await session.send(body)
+      return
+    } catch (e2) {
+      // 降级 2：失败原因附进日志即可，不再抛出（避免 Koishi 显示"发生未知错误"）
+      ctxApp?.logger?.('triangle:qq-md').warn(
+        'plain fallback also failed: %s',
+        (e2 as Error)?.message ?? e2,
+      )
+    }
   }
 }
 

@@ -1,7 +1,10 @@
 import type { Context, Session } from 'koishi'
 import { rawRoomIdOf } from '../room'
 import type { WebClient } from '../service/web-client'
+import { NETWORK_ERROR_BLOCK } from '../util/messages'
+import { requireBound } from '../util/preconditions'
 import { sendQQMarkdown, type QQButton } from '../util/qq-markdown'
+import { makeWrap } from '../util/safe-action'
 
 export interface ReportDeps {
   web: WebClient | null
@@ -9,17 +12,19 @@ export interface ReportDeps {
 }
 
 export function registerReportCommands(ctx: Context, deps: ReportDeps): void {
-  ctx
-    .command('查看报告', '查看当前任务的待处理报告')
-    .action(async ({ session }) => {
-      if (!session) return
-      if (!deps.web) return reply(session, deps, '> 未配置角色卡服务。')
-      const qqOpenid = session.userId
-      if (!qqOpenid) return reply(session, deps, '> 无法获取 QQ 标识。')
-      const groupId = session.isDirect ? undefined : rawRoomIdOf(session) ?? undefined
+  const wrap = makeWrap(ctx, deps.useMarkdown)
 
-      const r = await deps.web.getPendingReport(qqOpenid, groupId)
-      if (!r) return reply(session, deps, '> 暂时无法连接角色卡系统。')
+  ctx.command('查看报告', '查看当前任务的待处理报告').action(
+    wrap(async ({ session }) => {
+      if (!session) return
+      if (!(await requireBound(session, deps))) return
+      const qqOpenid = session.userId!
+      const groupId = session.isDirect
+        ? undefined
+        : rawRoomIdOf(session) ?? undefined
+
+      const r = await deps.web!.getPendingReport(qqOpenid, groupId)
+      if (!r) return reply(session, deps, NETWORK_ERROR_BLOCK)
       if (!r.success) return reply(session, deps, `> ${r.error ?? '查询失败'}`)
       if (!r.report) {
         return reply(session, deps, `> ${r.message ?? '当前没有待处理的报告。'}`)
@@ -36,7 +41,8 @@ export function registerReportCommands(ctx: Context, deps: ReportDeps): void {
       const rw = rep.myRewards
       const reward: string[] = []
       if (rw.commend) reward.push(`嘉奖 ${rw.commend > 0 ? '+' : ''}${rw.commend}`)
-      if (rw.reprimand) reward.push(`申诫 ${rw.reprimand > 0 ? '+' : ''}${rw.reprimand}`)
+      if (rw.reprimand)
+        reward.push(`申诫 ${rw.reprimand > 0 ? '+' : ''}${rw.reprimand}`)
       if (rw.mvp) reward.push('MVP')
       if (rw.probation) reward.push('察看期')
       lines.push(`待结算　${reward.length ? reward.join(' · ') : '无'}`)
@@ -56,19 +62,20 @@ export function registerReportCommands(ctx: Context, deps: ReportDeps): void {
         ])
       }
       await reply(session, deps, lines.join('\n'), buttons)
-    })
+    }),
+  )
 
-  ctx
-    .command('通过报告', '接受当前评级')
-    .action(async ({ session }) => {
+  ctx.command('通过报告', '接受当前评级').action(
+    wrap(async ({ session }) => {
       if (!session) return
-      if (!deps.web) return reply(session, deps, '> 未配置角色卡服务。')
-      const qqOpenid = session.userId
-      if (!qqOpenid) return reply(session, deps, '> 无法获取 QQ 标识。')
-      const groupId = session.isDirect ? undefined : rawRoomIdOf(session) ?? undefined
+      if (!(await requireBound(session, deps))) return
+      const qqOpenid = session.userId!
+      const groupId = session.isDirect
+        ? undefined
+        : rawRoomIdOf(session) ?? undefined
 
-      const r = await deps.web.agentResponse(qqOpenid, groupId ?? null, 'accept')
-      if (!r) return reply(session, deps, '> 暂时无法连接角色卡系统。')
+      const r = await deps.web!.agentResponse(qqOpenid, groupId ?? null, 'accept')
+      if (!r) return reply(session, deps, NETWORK_ERROR_BLOCK)
       if (!r.success) return reply(session, deps, `> ${r.error ?? '操作失败'}`)
       const note = r.autoFinalized ? '（任务报告已完结）' : ''
       await reply(
@@ -77,30 +84,32 @@ export function registerReportCommands(ctx: Context, deps: ReportDeps): void {
         `> ${r.message ?? '已接受评级'}${note}`,
         [[{ label: '查询状态', data: '查询状态' }]],
       )
-    })
+    }),
+  )
 
-  ctx
-    .command('申诉报告 <reason:text>', '提出申诉')
-    .action(async ({ session }, reason) => {
+  ctx.command('申诉报告 <reason:text>', '提出申诉').action(
+    wrap(async ({ session }, reason) => {
       if (!session) return
-      if (!deps.web) return reply(session, deps, '> 未配置角色卡服务。')
-      const qqOpenid = session.userId
-      if (!qqOpenid) return reply(session, deps, '> 无法获取 QQ 标识。')
+      if (!(await requireBound(session, deps))) return
+      const qqOpenid = session.userId!
       if (!reason || !reason.trim()) {
         return reply(session, deps, '**用法**　申诉报告 原因（至少 1 字）')
       }
-      const groupId = session.isDirect ? undefined : rawRoomIdOf(session) ?? undefined
+      const groupId = session.isDirect
+        ? undefined
+        : rawRoomIdOf(session) ?? undefined
 
-      const r = await deps.web.agentResponse(
+      const r = await deps.web!.agentResponse(
         qqOpenid,
         groupId ?? null,
         'appeal',
         reason.trim(),
       )
-      if (!r) return reply(session, deps, '> 暂时无法连接角色卡系统。')
+      if (!r) return reply(session, deps, NETWORK_ERROR_BLOCK)
       if (!r.success) return reply(session, deps, `> ${r.error ?? '申诉失败'}`)
       await reply(session, deps, `> ${r.message ?? '申诉已提交，等待经理处理。'}`)
-    })
+    }),
+  )
 }
 
 function myStatusLabel(s: string): string {

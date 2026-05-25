@@ -3,7 +3,15 @@ import { rawRoomIdOf, roomIdOf } from '../room'
 import type { RoomStore } from '../service/store'
 import type { WebClient } from '../service/web-client'
 import { isAdmin } from '../util/auth'
+import {
+  GROUP_ONLY,
+  NETWORK_ERROR_BLOCK,
+  NO_GROUP,
+  NO_WEB_CONFIG_BLOCK,
+} from '../util/messages'
+import { requireMissionBound } from '../util/preconditions'
 import { sendQQMarkdown, type QQButton } from '../util/qq-markdown'
+import { makeWrap } from '../util/safe-action'
 
 export interface MissionDeps {
   web: WebClient | null
@@ -12,17 +20,16 @@ export interface MissionDeps {
 }
 
 export function registerMissionCommands(ctx: Context, deps: MissionDeps): void {
-  ctx
-    .command('查看任务', '查看当前群绑定任务详情')
-    .action(async ({ session }) => {
-      if (!session) return
-      if (session.isDirect) return reply(session, deps, '> 私聊不支持此命令。')
-      if (!deps.web) return reply(session, deps, '> 未配置角色卡服务。')
-      const groupId = rawRoomIdOf(session)
-      if (!groupId) return reply(session, deps, '> 无法定位群。')
+  const wrap = makeWrap(ctx, deps.useMarkdown)
 
-      const r = await deps.web.getMissionDetail(groupId)
-      if (!r) return reply(session, deps, '> 暂时无法连接角色卡系统。')
+  ctx.command('查看任务', '查看当前群绑定任务详情').action(
+    wrap(async ({ session }) => {
+      if (!session) return
+      if (!(await requireMissionBound(session, deps))) return
+      const groupId = rawRoomIdOf(session)!
+
+      const r = await deps.web!.getMissionDetail(groupId)
+      if (!r) return reply(session, deps, NETWORK_ERROR_BLOCK)
       if (!r.success || !r.mission) {
         return reply(session, deps, `> ${r.error ?? '本群暂未绑定任务'}`)
       }
@@ -46,18 +53,22 @@ export function registerMissionCommands(ctx: Context, deps: MissionDeps): void {
       await reply(session, deps, lines.join('\n'), [
         [{ label: '任务属性', data: '任务属性' }],
       ])
-    })
+    }),
+  )
 
-  ctx
-    .command('开始任务 <code:string>', '管理员：绑定网页任务到本群')
-    .action(async ({ session }, code) => {
+  ctx.command('开始任务 <code:string>', '管理员：绑定网页任务到本群').action(
+    wrap(async ({ session }, code) => {
       if (!session) return
-      if (session.isDirect) return reply(session, deps, '> 私聊不支持此命令。')
+      if (session.isDirect) return reply(session, deps, GROUP_ONLY)
       const groupId = rawRoomIdOf(session)
       const roomId = roomIdOf(session)
-      if (!groupId || !roomId) return reply(session, deps, '> 无法定位群。')
+      if (!groupId || !roomId) return reply(session, deps, NO_GROUP)
 
-      const room = await deps.rooms.getOrCreate(roomId, session.platform, groupId)
+      const room = await deps.rooms.getOrCreate(
+        roomId,
+        session.platform,
+        groupId,
+      )
       if (!isAdmin(session, room)) {
         return reply(session, deps, '> 需要管理员权限。')
       }
@@ -80,13 +91,13 @@ export function registerMissionCommands(ctx: Context, deps: MissionDeps): void {
         )
       }
 
-      if (!deps.web) return reply(session, deps, '> 未配置角色卡服务。')
+      if (!deps.web) return reply(session, deps, NO_WEB_CONFIG_BLOCK)
       if (!code) {
         return reply(session, deps, '**用法**　开始任务 绑定码（或 不使用）')
       }
 
       const r = await deps.web.bindMission(code.trim(), groupId)
-      if (!r) return reply(session, deps, '> 暂时无法连接角色卡系统。')
+      if (!r) return reply(session, deps, NETWORK_ERROR_BLOCK)
       if (!r.success) return reply(session, deps, `> ${r.error ?? '绑定失败'}`)
 
       // 顺手拉一次任务详情，把成员列表（qqOpenid）同步进 RoomState
@@ -108,18 +119,22 @@ export function registerMissionCommands(ctx: Context, deps: MissionDeps): void {
         ['# 任务已绑定', '', `任务　**${r.missionName ?? r.missionId}**`].join('\n'),
         [[{ label: '查看任务', data: '查看任务' }]],
       )
-    })
+    }),
+  )
 
-  ctx
-    .command('结束任务', '管理员：结束当前任务')
-    .action(async ({ session }) => {
+  ctx.command('结束任务', '管理员：结束当前任务').action(
+    wrap(async ({ session }) => {
       if (!session) return
-      if (session.isDirect) return reply(session, deps, '> 私聊不支持此命令。')
+      if (session.isDirect) return reply(session, deps, GROUP_ONLY)
       const groupId = rawRoomIdOf(session)
       const roomId = roomIdOf(session)
-      if (!groupId || !roomId) return reply(session, deps, '> 无法定位群。')
+      if (!groupId || !roomId) return reply(session, deps, NO_GROUP)
 
-      const room = await deps.rooms.getOrCreate(roomId, session.platform, groupId)
+      const room = await deps.rooms.getOrCreate(
+        roomId,
+        session.platform,
+        groupId,
+      )
       if (!isAdmin(session, room)) {
         return reply(session, deps, '> 需要管理员权限。')
       }
@@ -148,25 +163,29 @@ export function registerMissionCommands(ctx: Context, deps: MissionDeps): void {
         r.missionMembers = []
       })
       await reply(session, deps, `> 任务「${oldName ?? '当前任务'}」已结束。`)
-    })
+    }),
+  )
 
-  ctx
-    .command('解绑任务', '管理员：解除群与网页任务的绑定')
-    .action(async ({ session }) => {
+  ctx.command('解绑任务', '管理员：解除群与网页任务的绑定').action(
+    wrap(async ({ session }) => {
       if (!session) return
-      if (session.isDirect) return reply(session, deps, '> 私聊不支持此命令。')
-      if (!deps.web) return reply(session, deps, '> 未配置角色卡服务。')
+      if (session.isDirect) return reply(session, deps, GROUP_ONLY)
+      if (!deps.web) return reply(session, deps, NO_WEB_CONFIG_BLOCK)
       const groupId = rawRoomIdOf(session)
       const roomId = roomIdOf(session)
-      if (!groupId || !roomId) return reply(session, deps, '> 无法定位群。')
+      if (!groupId || !roomId) return reply(session, deps, NO_GROUP)
 
-      const room = await deps.rooms.getOrCreate(roomId, session.platform, groupId)
+      const room = await deps.rooms.getOrCreate(
+        roomId,
+        session.platform,
+        groupId,
+      )
       if (!isAdmin(session, room)) {
         return reply(session, deps, '> 需要管理员权限。')
       }
 
       const r = await deps.web.unbindMission(groupId)
-      if (!r) return reply(session, deps, '> 暂时无法连接角色卡系统。')
+      if (!r) return reply(session, deps, NETWORK_ERROR_BLOCK)
       if (!r.success) return reply(session, deps, '> 解绑失败。')
 
       await deps.rooms.update(roomId, session.platform, groupId, (room) => {
@@ -176,7 +195,8 @@ export function registerMissionCommands(ctx: Context, deps: MissionDeps): void {
         room.missionMembers = []
       })
       await reply(session, deps, '> 已解除群与任务的绑定。')
-    })
+    }),
+  )
 }
 
 async function reply(

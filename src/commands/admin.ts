@@ -313,7 +313,16 @@ async function verifyManagerRole(
 
   const role = await deps.web.checkManagerRole(qqOpenid)
   if (!role) {
-    return `> 暂时无法连接角色卡系统。如需跳过验证，使用「${command} 不使用」。`
+    return [
+      '# 暂时连不上角色卡服务',
+      '',
+      '可能原因：',
+      '· 角色卡服务器临时离线 / 重启中',
+      '· 网络抖动',
+      '· Bot 配置中的 `webApiBase` 写错',
+      '',
+      `如需跳过验证，使用「${command} 不使用」。`,
+    ].join('\n')
   }
   if (!role.success) {
     return `> ${role.error ?? '查询失败'}`
