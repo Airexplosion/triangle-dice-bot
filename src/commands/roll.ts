@@ -20,7 +20,7 @@ export interface RollDeps {
 
 /** 三重升华专属横幅图（横向 banner 版，725x182，~4:1）*/
 const TRIPLE_SUBLIMATION_IMG =
-  'https://tr.kaigua.vip/assets/images/triple-sublimation-banner.png'
+  'https://tr.kaigua.vip/assets/images/triple-sublimation-banner-v3.png'
 
 export function registerRollCommands(ctx: Context, deps: RollDeps): void {
   ctx
