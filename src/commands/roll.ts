@@ -27,27 +27,6 @@ export function registerRollCommands(ctx: Context, deps: RollDeps): void {
     .command('现实修改 <aptitude:string>', '使用现实修改触发骰点')
     .action(async ({ session }, aptitude) => handle(ctx, deps, session, '现实修改', aptitude))
 
-  // 调试：模拟一次三重升华回复（测完可删）
-  ctx.command('三重升华测试', '调试：模拟一次三重升华骰点回复').action(async ({ session }) => {
-    if (!session) return
-    const md = [
-      `# 现实修改 · 专注`,
-      '',
-      `![三重升华 #500px #126px](${TRIPLE_SUBLIMATION_IMG})`,
-      '',
-      `资质值　**5**`,
-      '',
-      `原始骰　**3 3 3 1 2 4**`,
-      '',
-      `成功数　**3**`,
-      `本次混沌　**0**　★ 三重升华 ★`,
-      `混沌池　**0**（+0）`,
-      '',
-      `> 判定：**成功**`,
-    ].join('\n')
-    await sendQQMarkdown(session, md, { enabled: deps.useMarkdown })
-  })
-
   ctx
     .command('异常能力 <aptitude:string>', '使用异常能力触发骰点')
     .action(async ({ session }, aptitude) => {
