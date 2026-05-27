@@ -14,23 +14,32 @@ import {
   countSuccesses,
   d6ChaosCount,
   d6ThreeCount,
+  d8SuccessDelta,
   d10ThreeCount,
   isD10Failure,
+  type D8Mode,
 } from './dice'
 
 export function isTripleSublimation(
   dice: readonly number[],
   d6: number | null = null,
+  d8: number | null = null,
+  d8Mode: D8Mode = 'ignore',
 ): boolean {
-  return countSuccesses(dice) + d6ThreeCount(d6) === 3
+  return (
+    countSuccesses(dice) + d6ThreeCount(d6) + d8SuccessDelta(d8, d8Mode) === 3
+  )
 }
 
 export function calculateChaos(
   dice: readonly number[],
   unconsumedBurnout: number,
   d6: number | null = null,
+  d8: number | null = null,
+  d8Mode: D8Mode = 'ignore',
 ): number {
-  if (isTripleSublimation(dice, d6)) return 0
+  if (isTripleSublimation(dice, d6, d8, d8Mode)) return 0
+  // d8 不贡献混沌，仅参与三重升华判定 / 总成功数
   return countNonSuccesses(dice) + unconsumedBurnout + d6ChaosCount(d6)
 }
 
@@ -50,7 +59,15 @@ export function isUnleashActivated(
   rawDice: readonly number[],
   d6: number | null = null,
   d10: number | null = null,
+  d8: number | null = null,
+  d8Mode: D8Mode = 'ignore',
 ): boolean {
   if (isD10Failure(d10)) return false
-  return countSuccesses(rawDice) + d6ThreeCount(d6) + d10ThreeCount(d10) === 7
+  return (
+    countSuccesses(rawDice) +
+      d6ThreeCount(d6) +
+      d10ThreeCount(d10) +
+      d8SuccessDelta(d8, d8Mode) ===
+    7
+  )
 }

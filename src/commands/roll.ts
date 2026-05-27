@@ -7,12 +7,16 @@ import {
   countSuccesses,
   d6ChaosCount,
   d6ThreeCount,
+  d8SuccessDelta,
+  d8ThreeCount,
   d10ChaosCount,
   d10ThreeCount,
   isD10Failure,
   roll6d4,
   rollD6,
+  rollD8,
   rollD10,
+  type D8Mode,
 } from '../game/dice'
 import { rawRoomIdOf, roomIdOf } from '../room'
 import type { PendingRoll } from '../types'
@@ -35,18 +39,30 @@ async function getDiceUnlocks(
   ctx: Context,
   deps: RollDeps,
   session: import('koishi').Session,
-): Promise<{ u2: boolean; n1: boolean }> {
-  if (!deps.web || !session.userId) return { u2: false, n1: false }
+): Promise<{ u2: boolean; n1: boolean; g3: boolean }> {
+  if (!deps.web || !session.userId) return { u2: false, n1: false, g3: false }
   try {
     const groupId = session.isDirect ? undefined : rawRoomIdOf(session) ?? undefined
     const r = await deps.web.getCharacterHighWalls(session.userId, groupId)
-    if (!r?.success || !r.highWalls) return { u2: false, n1: false }
+    if (!r?.success || !r.highWalls) return { u2: false, n1: false, g3: false }
     const codes = new Set(r.highWalls.map((w) => fileCode(w.filename)))
-    return { u2: codes.has('U2'), n1: codes.has('N1') }
+    return { u2: codes.has('U2'), n1: codes.has('N1'), g3: codes.has('G3') }
   } catch (e) {
     ctx.logger('triangle').warn('getDiceUnlocks failed: %s', (e as Error).message ?? e)
-    return { u2: false, n1: false }
+    return { u2: false, n1: false, g3: false }
   }
+}
+
+/** d8 各面对应的"赞助商致敬"文本（图源规则书）。 */
+const D8_TRIBUTES: Record<number, string> = {
+  1: '引用一件恰好在当前时刻前 40 小时发生于目标或地点之上、并影响此因果链的事物',
+  2: '引用一件发生在另一个国家、并影响此因果链的事物',
+  3: '一个 3（可在下方选择 计入 / 减去 / 忽略）',
+  4: '引用一种因接触虚构作品而影响此因果链的方式',
+  5: '引用一种"湿嘴"牌口香糖与膳食补充剂影响此因果链的方式（请务必包含确切的措辞！）',
+  6: '两个 3（可在下方选择 计入 / 减去 / 忽略）',
+  7: '在因果链中包含一样蓝色的东西',
+  8: '引用一次影响此因果链的背叛',
 }
 
 /**
@@ -62,12 +78,15 @@ const EXPLICIT_DICE_MODES = new Set(['d4', 'd6', 'd10', 'd10d6', 'nod6'])
 interface DiceChoice {
   useD6: boolean
   useD10: boolean
+  /** G3 解锁后 现实修改 强制摇 d8（异常能力 永远不摇）。 */
+  useD8: boolean
 }
 function parseDiceMode(mode: string | undefined): DiceChoice | null {
   if (!mode || !EXPLICIT_DICE_MODES.has(mode)) return null
   return {
     useD6: mode === 'd6' || mode === 'd10d6',
     useD10: mode === 'd10' || mode === 'd10d6',
+    useD8: false, // d8 与 异常能力 选骰面板无关；现实修改 单独判断
   }
 }
 
@@ -85,7 +104,20 @@ const TRIPLE_SUBLIMATION_IMG =
 export function registerRollCommands(ctx: Context, deps: RollDeps): void {
   ctx
     .command('现实修改 <aptitude:string>', '使用现实修改触发骰点')
-    .action(async ({ session }, aptitude) => handle(ctx, deps, session, '现实修改', aptitude))
+    .action(async ({ session }, aptitude) => {
+      if (!session) return
+      // G3 解锁 → 现实修改 自动摇 d8（"赞助骰"，无用户选项）
+      let useD8 = false
+      if (aptitude && APTITUDE_SET.has(aptitude) && !session.isDirect) {
+        const unlocks = await getDiceUnlocks(ctx, deps, session)
+        useD8 = unlocks.g3
+      }
+      return handle(ctx, deps, session, '现实修改', aptitude, {
+        useD6: false,
+        useD10: false,
+        useD8,
+      })
+    })
 
   ctx
     .command('异常能力 <aptitude:string> [diceMode:string]', '使用异常能力触发骰点')
@@ -138,7 +170,11 @@ export function registerRollCommands(ctx: Context, deps: RollDeps): void {
           return
         }
       }
-      return handle(ctx, deps, session, '异常能力', aptitude, { useD6: false, useD10: false })
+      return handle(ctx, deps, session, '异常能力', aptitude, {
+        useD6: false,
+        useD10: false,
+        useD8: false,
+      })
     })
 }
 
@@ -205,8 +241,8 @@ async function handle(
   session: import('koishi').Session | undefined,
   trigger: Trigger,
   aptName: string | undefined,
-  /** 仅 trigger='异常能力' 时有意义。U2 / N1 解锁后由用户在面板上选择。 */
-  diceChoice: DiceChoice = { useD6: false, useD10: false },
+  /** 异常能力：U2/N1 玩家面板上选；现实修改：G3 解锁则 useD8 强制 true。 */
+  diceChoice: DiceChoice = { useD6: false, useD10: false, useD8: false },
 ): Promise<void> {
   if (!session) return
 
@@ -281,11 +317,14 @@ async function handle(
     const fcBefore = room.failureCount
     const burnout = isReality ? fcBefore + zeroPenalty : zeroPenalty
 
-    // d6 / d10 仅在 异常能力 + 用户选择时摇
+    // d6 / d10 仅在 异常能力 + 用户选择时摇；d8 仅在 现实修改 + G3 解锁时摇
     const d6Roll: number | null =
       trigger === '异常能力' && diceChoice.useD6 ? rollD6() : null
     const d10Roll: number | null =
       trigger === '异常能力' && diceChoice.useD10 ? rollD10() : null
+    const d8Roll: number | null =
+      trigger === '现实修改' && diceChoice.useD8 ? rollD8() : null
+    const d8Mode: D8Mode = 'ignore' // 初始默认忽略；玩家可后修改 /d8计入 /d8减去
     const useD10 = d10Roll !== null
     const d10Failure = isD10Failure(d10Roll)
 
@@ -316,17 +355,21 @@ async function handle(
       chaosCalc = d10ChaosCount(d10Roll) + burnout + d6ChaosCount(d6Roll)
       unleash = isUnleashActivated(rawDice, d6Roll, d10Roll)
     } else {
-      // ─── 常规模式：6D4 (+ d6) ───
+      // ─── 常规模式：6D4 (+ d6, + d8) ───
       rawDice = roll6d4()
-      rawTriple = isTripleSublimation(rawDice, d6Roll)
+      // d8 初始 d8Mode='ignore'，所以 d8 暂不计入三重升华 / 成功数；玩家后续点按钮才变
+      rawTriple = isTripleSublimation(rawDice, d6Roll, d8Roll, d8Mode)
       const burned = applyBurnout(rawDice, burnout)
       burnedDice = burned.dice
       unconsumed = burned.unconsumed
-      successes = countSuccesses(burned.dice) + d6ThreeCount(d6Roll)
+      successes =
+        countSuccesses(burned.dice) +
+        d6ThreeCount(d6Roll) +
+        d8SuccessDelta(d8Roll, d8Mode)
       chaosCalc = rawTriple
         ? 0
-        : calculateChaos(burned.dice, burned.unconsumed, d6Roll)
-      unleash = isUnleashActivated(rawDice, d6Roll, null)
+        : calculateChaos(burned.dice, burned.unconsumed, d6Roll, d8Roll, d8Mode)
+      unleash = isUnleashActivated(rawDice, d6Roll, null, d8Roll, d8Mode)
     }
 
     const isMember = isMissionMember(room, playerId)
@@ -355,6 +398,8 @@ async function handle(
       consumedAptitudes: {},
       d6Roll,
       d10Roll,
+      d8Roll,
+      d8Mode,
     }
     deps.pending.set(roomId, playerId, pendingRoll)
 
@@ -381,6 +426,8 @@ async function handle(
       d10Roll,
       d10ThreesAfterBurnout,
       d10Failure,
+      d8Roll,
+      d8Mode,
       unleash,
     }
   })
@@ -438,7 +485,11 @@ interface RollResult {
   d10ThreesAfterBurnout: number
   /** d10=3 强制失败 */
   d10Failure: boolean
-  /** UNL3ASH：原始（d4 + d6 + d10）总 3 数 ≥ 7，在任何后修改前判定 */
+  /** 赞助骰：null = 未投，1-8 = 本次摇出的 d8 */
+  d8Roll: number | null
+  /** 玩家对 d8=3/6 的选择 */
+  d8Mode: D8Mode
+  /** UNL3ASH：恰好 7 个 3（含 d8 当前 mode 贡献），在任何后修改前判定 */
   unleash: boolean
 }
 
@@ -531,9 +582,21 @@ function renderRollResult(r: RollResult): string {
     if (d6Chaos > 0) chaosParts.push(`6 面骰 +${d6Chaos}`)
     lines.push(`本次混沌　**+${r.chaos}**（${chaosParts.join(' + ')}）`)
   } else {
-    // ─── 6D4 (+ d6) 模式渲染 ───
+    // ─── 6D4 (+ d6, + d8) 模式渲染 ───
     lines.push(`原始骰　**${formatDice(r.rawDice)}**`)
     if (r.d6Roll !== null) lines.push(renderD6Line(r.d6Roll))
+    if (r.d8Roll !== null) {
+      lines.push(`8 面骰　**${r.d8Roll}**`)
+      const tribute = D8_TRIBUTES[r.d8Roll]
+      if (tribute) lines.push(`> ${tribute}`)
+      // 当前模式状态行
+      if (d8ThreeCount(r.d8Roll) > 0) {
+        const label = r.d8Mode === 'count' ? `计入 +${d8ThreeCount(r.d8Roll)}`
+          : r.d8Mode === 'subtract' ? `减去 −${d8ThreeCount(r.d8Roll)}`
+            : '忽略'
+        lines.push(`> 当前 d8 处理：**${label}**`)
+      }
+    }
 
     if (r.burnout > 0 || r.isReality) {
       const parts: string[] = []
@@ -615,21 +678,30 @@ function renderRollButtons(r: RollResult): QQButton[][] {
       ],
     ]
   }
-  return [
-    [
-      { label: '成功+1', data: '/增加成功 1', primary: true, type: 'input', enter: true },
-      { label: '成功-1', data: '/减少成功 1', type: 'input', enter: true },
-    ],
-    [
-      { label: '撤回', data: '/撤回骰点', type: 'input', enter: true },
-      {
-        label: `再投 ${r.aptName}`,
-        data: `/${r.trigger} ${r.aptName}`,
-        type: 'input',
-        enter: true,
-      },
-    ],
-  ]
+  const rows: QQButton[][] = []
+  // 第一行：成功修改
+  rows.push([
+    { label: '成功+1', data: '/增加成功 1', primary: true, type: 'input', enter: true },
+    { label: '成功-1', data: '/减少成功 1', type: 'input', enter: true },
+  ])
+  // d8 = 3 / 6 时，给"计入/减去/忽略"按钮（高亮当前选中项）
+  if (r.d8Roll !== null && d8ThreeCount(r.d8Roll) > 0) {
+    rows.push([
+      { label: '计入 d8', data: '/d8计入', primary: r.d8Mode === 'count', type: 'input', enter: true },
+      { label: '减去 d8', data: '/d8减去', primary: r.d8Mode === 'subtract', type: 'input', enter: true },
+      { label: '忽略 d8', data: '/d8忽略', primary: r.d8Mode === 'ignore', type: 'input', enter: true },
+    ])
+  }
+  rows.push([
+    { label: '撤回', data: '/撤回骰点', type: 'input', enter: true },
+    {
+      label: `再投 ${r.aptName}`,
+      data: `/${r.trigger} ${r.aptName}`,
+      type: 'input',
+      enter: true,
+    },
+  ])
+  return rows
 }
 
 async function reply(

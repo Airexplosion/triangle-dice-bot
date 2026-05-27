@@ -1,6 +1,12 @@
 import type { Context } from 'koishi'
 import { calculateChaos } from '../game/chaos'
-import { countSuccesses } from '../game/dice'
+import {
+  countSuccesses,
+  d6ThreeCount,
+  d8SuccessDelta,
+  d8ThreeCount,
+  type D8Mode,
+} from '../game/dice'
 import { rawRoomIdOf, roomIdOf } from '../room'
 import type { PendingRollStore } from '../service/pending'
 import { getOrCreatePlayer, type RoomStore } from '../service/store'
@@ -42,6 +48,183 @@ export function registerPostRollCommands(ctx: Context, deps: PostRollDeps): void
   ctx
     .command('撤回骰点', '撤销本次骰点的混沌 / 失败计数 / 资质消耗')
     .action(async ({ session }) => handleUndo(deps, session))
+
+  // ─── d8 (赞助骰) 计入 / 减去 / 忽略 ───
+  ctx
+    .command('d8计入', '骰后：把 d8=3/6 的 3 数计入总成功')
+    .action(async ({ session }) => handleD8Mode(deps, session, 'count'))
+  ctx
+    .command('d8减去', '骰后：把 d8=3/6 的 3 数从总成功中减去')
+    .action(async ({ session }) => handleD8Mode(deps, session, 'subtract'))
+  ctx
+    .command('d8忽略', '骰后：忽略 d8 的 3 数贡献')
+    .action(async ({ session }) => handleD8Mode(deps, session, 'ignore'))
+}
+
+/**
+ * 切换 d8 的"计入 / 减去 / 忽略"模式。
+ * 重算总成功 / 混沌 / 现实修改失败标志，把差值写回房间池与 web。
+ */
+async function handleD8Mode(
+  deps: PostRollDeps,
+  session: import('koishi').Session | undefined,
+  newMode: D8Mode,
+): Promise<void> {
+  if (!session) return
+  if (session.isDirect) return reply(session, deps, '> 私聊不支持骰点命令。')
+
+  const roomId = roomIdOf(session)
+  const rawRoomId = rawRoomIdOf(session)
+  if (!roomId || !rawRoomId) return reply(session, deps, '> 无法定位房间。')
+  const playerId = session.userId ?? 'unknown'
+
+  const pending = deps.pending.get(roomId, playerId)
+  if (!pending) {
+    return reply(session, deps, '> 没有待修改的骰点结果（已过期或未骰点）。')
+  }
+  if (pending.d8Roll === null) {
+    return reply(session, deps, '> 本次骰点未使用 d8（赞助骰）。')
+  }
+  if (d8ThreeCount(pending.d8Roll) === 0) {
+    return reply(
+      session,
+      deps,
+      `> d8 = ${pending.d8Roll} 没有 3 可计入或减去（仅 d8 = 3 / 6 有效）。`,
+    )
+  }
+  if (pending.d8Mode === newMode) {
+    return reply(session, deps, `> d8 当前已是 **${labelD8Mode(newMode)}**。`)
+  }
+
+  await syncFromWeb(deps.web, deps.rooms, session)
+
+  let outcome: D8ModeOutcome | null = null
+
+  await deps.rooms.update(roomId, session.platform, rawRoomId, (room) => {
+    const dice = pending.currentDice
+    const oldMode = pending.d8Mode
+    const oldSuccesses =
+      countSuccesses(dice) +
+      d6ThreeCount(pending.d6Roll) +
+      d8SuccessDelta(pending.d8Roll, oldMode)
+    const oldChaos = pending.chaosApplied
+
+    pending.d8Mode = newMode
+
+    const newSuccesses =
+      countSuccesses(dice) +
+      d6ThreeCount(pending.d6Roll) +
+      d8SuccessDelta(pending.d8Roll, newMode)
+    const newChaos = calculateChaos(
+      dice,
+      pending.unconsumedBurnout,
+      pending.d6Roll,
+      pending.d8Roll,
+      newMode,
+    )
+    const isMember = isMissionMember(room, playerId)
+    const chaosDiff = isMember ? newChaos - oldChaos : 0
+
+    if (isMember) {
+      room.chaosPool = Math.max(0, room.chaosPool + chaosDiff)
+    }
+
+    let failureNote: string | null = null
+    let failureDelta = 0
+    if (pending.trigger === '现实修改' && isMember) {
+      if (pending.failureIncremented && newSuccesses > 0) {
+        room.failureCount = Math.max(0, room.failureCount - 1)
+        pending.failureIncremented = false
+        failureNote = '成功数恢复，撤销失败计数 +1'
+        failureDelta = -1
+      } else if (
+        !pending.failureIncremented &&
+        oldSuccesses > 0 &&
+        newSuccesses === 0
+      ) {
+        room.failureCount += 1
+        pending.failureIncremented = true
+        failureNote = '成功数归零，失败计数 +1'
+        failureDelta = 1
+      }
+    }
+
+    pending.chaosApplied = isMember ? newChaos : 0
+
+    outcome = {
+      oldMode,
+      newMode,
+      d8Roll: pending.d8Roll!,
+      isMember,
+      oldSuccesses,
+      newSuccesses,
+      oldChaos,
+      newChaos,
+      chaosDiff,
+      chaosPool: room.chaosPool,
+      failureNote,
+      failureDelta,
+      failureCount: room.failureCount,
+    }
+  })
+
+  if (!outcome) return
+  const o = outcome as D8ModeOutcome
+
+  // 同步 web：混沌差值 + 失败差值（仅 mission 成员）
+  if (o.isMember) {
+    if (o.chaosDiff !== 0) {
+      fireSyncChaos(deps.web, session, o.chaosDiff, `d8 ${labelD8Mode(o.newMode)}`)
+    }
+    if (o.failureDelta !== 0) {
+      fireSyncFailure(deps.web, session, o.failureDelta)
+    }
+  }
+
+  await reply(session, deps, renderD8ModeChange(o), [])
+}
+
+interface D8ModeOutcome {
+  oldMode: D8Mode
+  newMode: D8Mode
+  d8Roll: number
+  isMember: boolean
+  oldSuccesses: number
+  newSuccesses: number
+  oldChaos: number
+  newChaos: number
+  chaosDiff: number
+  chaosPool: number
+  failureNote: string | null
+  failureDelta: number
+  failureCount: number
+}
+
+function labelD8Mode(m: D8Mode): string {
+  if (m === 'count') return '计入'
+  if (m === 'subtract') return '减去'
+  return '忽略'
+}
+
+function renderD8ModeChange(o: D8ModeOutcome): string {
+  const lines: string[] = []
+  lines.push(`# d8 处理：${labelD8Mode(o.oldMode)} → **${labelD8Mode(o.newMode)}**`)
+  lines.push('')
+  lines.push(`d8 摇出　**${o.d8Roll}**（等效 ${d8ThreeCount(o.d8Roll)} 个 3）`)
+  lines.push('')
+  lines.push(`成功数　**${o.oldSuccesses} → ${o.newSuccesses}**`)
+  if (o.isMember) {
+    const sign = o.chaosDiff >= 0 ? '+' : ''
+    lines.push(`本次混沌　${o.oldChaos} → **${o.newChaos}**（差值 ${sign}${o.chaosDiff}）`)
+    lines.push(`混沌池　**${o.chaosPool}**`)
+    if (o.failureNote) {
+      lines.push('')
+      lines.push(`> ${o.failureNote}（当前失败计数 ${o.failureCount}）`)
+    }
+  } else {
+    lines.push('> 观察模式：本次切换不影响混沌池 / 失败计数')
+  }
+  return lines.join('\n')
 }
 
 async function handleUndo(
@@ -175,7 +358,11 @@ async function handle(
     }
 
     const oldDice = pending.currentDice
-    const oldSuccesses = countSuccesses(oldDice)
+    // 总成功数 = d4 + d6 + d8 当前 mode 贡献
+    const oldSuccesses =
+      countSuccesses(oldDice) +
+      d6ThreeCount(pending.d6Roll) +
+      d8SuccessDelta(pending.d8Roll, pending.d8Mode)
     const oldChaos = pending.chaosApplied
     const dice = [...oldDice]
 
@@ -201,9 +388,18 @@ async function handle(
       }
     }
 
-    // 后修改重算混沌时要把 d6 也带上（d6 自己不在池里，但贡献的 3 数 / 混沌仍参与判定）
-    const newSuccesses = countSuccesses(dice)
-    const newChaos = calculateChaos(dice, pending.unconsumedBurnout, pending.d6Roll)
+    // 后修改重算时把 d6 / d8 都带上（自身不在 d4 池里，但贡献的 3 数 / 混沌仍参与判定）
+    const newSuccesses =
+      countSuccesses(dice) +
+      d6ThreeCount(pending.d6Roll) +
+      d8SuccessDelta(pending.d8Roll, pending.d8Mode)
+    const newChaos = calculateChaos(
+      dice,
+      pending.unconsumedBurnout,
+      pending.d6Roll,
+      pending.d8Roll,
+      pending.d8Mode,
+    )
     const isMember = isMissionMember(room, playerId)
     // 观察模式：不影响混沌池/失败计数；chaosDiff 仅用于显示
     const chaosDiff = isMember ? newChaos - oldChaos : 0

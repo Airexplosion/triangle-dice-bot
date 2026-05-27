@@ -58,4 +58,17 @@ export interface PendingRoll {
    * d10 模式下 currentDice 为空，6D4 / 燃尽 / 增减成功 都不参与。
    */
   d10Roll: number | null
+  /**
+   * G3 解锁后的 d8（赞助骰）。
+   * null = 未使用；1-8 = 摇出的 d8 面值。仅 现实修改 用到。
+   */
+  d8Roll: number | null
+  /**
+   * 玩家对 d8=3/6 的处理选择：
+   *   'ignore'   = 不计入（默认）
+   *   'count'    = 计入（增加 d8 等效 3 数）
+   *   'subtract' = 减去（减少 d8 等效 3 数）
+   * d8 ∈ {1,2,4,5,7,8} 时此字段无效（d8 等效 3 数恒为 0）。
+   */
+  d8Mode: 'ignore' | 'count' | 'subtract'
 }

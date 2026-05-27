@@ -111,3 +111,38 @@ export function d10ChaosCount(d10: number | null): number {
 export function isD10Failure(d10: number | null): boolean {
   return d10 === 3
 }
+
+// ───────── d8（赞助骰）─────────
+// G3 解锁后，**现实修改** 必额外摇一颗 d8（与 6D4 同时投，不替代）。
+//   面值 1/2/4/5/7/8 → 玩家做"赞助商致敬"的角色扮演（bot 不强制判定）
+//   面值 3           → 1 个 3，玩家可选 计入 / 减去 / 忽略
+//   面值 6           → 2 个 3，玩家可选 计入 / 减去 / 忽略
+// d8 不贡献混沌。
+
+export type D8Mode = 'ignore' | 'count' | 'subtract'
+
+export function rollD8(rng: Rng = defaultRng): number {
+  return randInt(1, 8, rng)
+}
+
+/** d8 原始等效 3 数。3 → 1，6 → 2，其余 → 0。 */
+export function d8ThreeCount(d8: number | null): number {
+  if (d8 === 3) return 1
+  if (d8 === 6) return 2
+  return 0
+}
+
+/**
+ * d8 按当前 mode 实际贡献的"3 数变化量"。
+ *   ignore   → 0
+ *   count    → +d8ThreeCount(d8)
+ *   subtract → -d8ThreeCount(d8)
+ * 当 d8 ∈ {1,2,4,5,7,8} 时 d8ThreeCount=0，mode 无意义，恒返回 0。
+ */
+export function d8SuccessDelta(d8: number | null, mode: D8Mode): number {
+  const base = d8ThreeCount(d8)
+  if (base === 0) return 0
+  if (mode === 'count') return base
+  if (mode === 'subtract') return -base
+  return 0
+}

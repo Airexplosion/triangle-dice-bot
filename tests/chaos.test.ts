@@ -3,6 +3,8 @@ import { calculateChaos, isTripleSublimation, isUnleashActivated } from '../src/
 import {
   d6ChaosCount,
   d6ThreeCount,
+  d8SuccessDelta,
+  d8ThreeCount,
   d10ChaosCount,
   d10ThreeCount,
   isD10Failure,
@@ -130,6 +132,65 @@ describe('d10ThreeCount / d10ChaosCount / isD10Failure', () => {
     expect(isD10Failure(3)).toBe(true)
     for (const f of [1, 2, 4, 5, 6, 7, 8, 9, 10]) expect(isD10Failure(f)).toBe(false)
     expect(isD10Failure(null)).toBe(false)
+  })
+})
+
+describe('d8ThreeCount / d8SuccessDelta', () => {
+  it('d8=3 → 1 个 3 基础', () => {
+    expect(d8ThreeCount(3)).toBe(1)
+    expect(d8SuccessDelta(3, 'count')).toBe(1)
+    expect(d8SuccessDelta(3, 'subtract')).toBe(-1)
+    expect(d8SuccessDelta(3, 'ignore')).toBe(0)
+  })
+  it('d8=6 → 2 个 3 基础', () => {
+    expect(d8ThreeCount(6)).toBe(2)
+    expect(d8SuccessDelta(6, 'count')).toBe(2)
+    expect(d8SuccessDelta(6, 'subtract')).toBe(-2)
+    expect(d8SuccessDelta(6, 'ignore')).toBe(0)
+  })
+  it('d8 ∈ {1,2,4,5,7,8} → 任何 mode 都 0', () => {
+    for (const f of [1, 2, 4, 5, 7, 8]) {
+      expect(d8ThreeCount(f)).toBe(0)
+      expect(d8SuccessDelta(f, 'count')).toBe(0)
+      expect(d8SuccessDelta(f, 'subtract')).toBe(0)
+    }
+  })
+  it('d8=null → 0', () => {
+    expect(d8ThreeCount(null)).toBe(0)
+    expect(d8SuccessDelta(null, 'count')).toBe(0)
+  })
+})
+
+describe('isTripleSublimation with d8 (d8 mode affects)', () => {
+  it('用户例：1 d4-3 + d8=6 计入 → 1+2=3 → triple', () => {
+    expect(isTripleSublimation([3, 1, 2, 4, 4, 4], null, 6, 'count')).toBe(true)
+  })
+  it('同样 1 d4-3 + d8=6 忽略 → 1 ≠ 3', () => {
+    expect(isTripleSublimation([3, 1, 2, 4, 4, 4], null, 6, 'ignore')).toBe(false)
+  })
+  it('5 d4-3 + d8=6 减去 → 5-2=3 → triple', () => {
+    expect(isTripleSublimation([3, 3, 3, 3, 3, 1], null, 6, 'subtract')).toBe(true)
+  })
+  it('与 d6 叠加：1 d4-3 + d6=3 + d8=3 计入 → 3 → triple', () => {
+    expect(isTripleSublimation([3, 1, 2, 4, 4, 4], 3, 3, 'count')).toBe(true)
+  })
+})
+
+describe('isUnleashActivated with d8', () => {
+  it('5 d4-3 + d6=6 + d8=ignore = 7 → UNL3ASH', () => {
+    expect(isUnleashActivated([3, 3, 3, 3, 3, 1], 6, null, null, 'ignore')).toBe(true)
+  })
+  it('5 d4-3 + d8=3 计入 = 6 → 不激活', () => {
+    expect(isUnleashActivated([3, 3, 3, 3, 3, 1], null, null, 3, 'count')).toBe(false)
+  })
+  it('6 d4-3 + d8=3 计入 = 7 → UNL3ASH', () => {
+    expect(isUnleashActivated([3, 3, 3, 3, 3, 3], null, null, 3, 'count')).toBe(true)
+  })
+  it('6 d4-3 + d8=6 计入 = 8 → 超过不激活', () => {
+    expect(isUnleashActivated([3, 3, 3, 3, 3, 3], null, null, 6, 'count')).toBe(false)
+  })
+  it('6 d4-3 + d8=6 减去 = 4 → 不足不激活', () => {
+    expect(isUnleashActivated([3, 3, 3, 3, 3, 3], null, null, 6, 'subtract')).toBe(false)
   })
 })
 
