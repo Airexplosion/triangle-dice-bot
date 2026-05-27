@@ -57,8 +57,8 @@ export function registerReportCommands(ctx: Context, deps: ReportDeps): void {
       const buttons: QQButton[][] = []
       if (rep.myStatus === 'pending') {
         buttons.push([
-          { label: '通过报告', data: '/通过报告', primary: true, type: 'input', enter: true },
-          { label: '申诉报告', data: '申诉报告 ', type: 'input' },
+          { label: '通过', data: '/通过报告', primary: true, type: 'input', enter: true },
+          { label: '申诉', data: '申诉报告 ', type: 'input' },
         ])
       }
       await reply(session, deps, lines.join('\n'), buttons)
@@ -82,7 +82,7 @@ export function registerReportCommands(ctx: Context, deps: ReportDeps): void {
         session,
         deps,
         `> ${r.message ?? '已接受评级'}${note}`,
-        [[{ label: '查询状态', data: '/查询状态', type: 'input', enter: true }]],
+        [[{ label: '状态', data: '/查询状态', type: 'input', enter: true }]],
       )
     }),
   )

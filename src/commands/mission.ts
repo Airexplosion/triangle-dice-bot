@@ -51,7 +51,7 @@ export function registerMissionCommands(ctx: Context, deps: MissionDeps): void {
         for (const mem of m.members) lines.push(`- ${mem.characterName}`)
       }
       await reply(session, deps, lines.join('\n'), [
-        [{ label: '任务属性', data: '/任务属性', type: 'input', enter: true }],
+        [{ label: '属性', data: '/任务属性', type: 'input', enter: true }],
       ])
     }),
   )
@@ -87,7 +87,7 @@ export function registerMissionCommands(ctx: Context, deps: MissionDeps): void {
           ['# 已进入独立任务模式', '', '骰点不会同步到网页，所有数据本地维护。'].join(
             '\n',
           ),
-          [[{ label: '任务属性', data: '/任务属性', type: 'input', enter: true }]],
+          [[{ label: '属性', data: '/任务属性', type: 'input', enter: true }]],
         )
       }
 
@@ -117,7 +117,7 @@ export function registerMissionCommands(ctx: Context, deps: MissionDeps): void {
         session,
         deps,
         ['# 任务已绑定', '', `任务　**${r.missionName ?? r.missionId}**`].join('\n'),
-        [[{ label: '查看任务', data: '/查看任务', type: 'input', enter: true }]],
+        [[{ label: '任务', data: '/查看任务', type: 'input', enter: true }]],
       )
     }),
   )
@@ -150,7 +150,7 @@ export function registerMissionCommands(ctx: Context, deps: MissionDeps): void {
             session,
             deps,
             `> 当前有未处理的报告（${status.pendingCount ?? 0} 待响应，${status.appealingCount ?? 0} 申诉中），请先处理后再结束任务。`,
-            [[{ label: '查看报告', data: '/查看报告', type: 'input', enter: true }]],
+            [[{ label: '报告', data: '/查看报告', type: 'input', enter: true }]],
           )
         }
       }

@@ -71,7 +71,7 @@ export function registerRollCommands(ctx: Context, deps: RollDeps): void {
                 })),
               )
             }
-            buttons.push([{ label: '常规异常', data: '/异常能力 __GRID__', type: 'input', enter: true }])
+            buttons.push([{ label: '异常', data: '/异常能力 __GRID__', type: 'input', enter: true }])
             const head = resp.characterName
               ? `# 异常能力（${resp.characterName}）\n\n点击触发：`
               : '# 异常能力\n\n点击触发：'
@@ -378,13 +378,13 @@ function renderRollResult(r: RollResult): string {
 function renderRollButtons(r: RollResult): QQButton[][] {
   return [
     [
-      { label: '增加成功 1', data: '/增加成功 1', primary: true, type: 'input', enter: true },
-      { label: '减少成功 1', data: '/减少成功 1', type: 'input', enter: true },
+      { label: '成功+1', data: '/增加成功 1', primary: true, type: 'input', enter: true },
+      { label: '成功-1', data: '/减少成功 1', type: 'input', enter: true },
     ],
     [
-      { label: '撤回骰点', data: '/撤回骰点', type: 'input', enter: true },
+      { label: '撤回', data: '/撤回骰点', type: 'input', enter: true },
       {
-        label: `再投 ${r.trigger} ${r.aptName}`,
+        label: `再投 ${r.aptName}`,
         data: `/${r.trigger} ${r.aptName}`,
         type: 'input',
         enter: true,

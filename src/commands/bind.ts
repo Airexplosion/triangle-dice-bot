@@ -56,8 +56,8 @@ export function registerBindCommands(ctx: Context, deps: BindDeps): void {
       }
       const buttons: QQButton[][] = [
         [
-          { label: '查询状态', data: '/查询状态', type: 'input', enter: true },
-          { label: '查询角色', data: '/查询角色', type: 'input', enter: true },
+          { label: '状态', data: '/查询状态', type: 'input', enter: true },
+          { label: '角色', data: '/查询角色', type: 'input', enter: true },
         ],
       ]
       await reply(

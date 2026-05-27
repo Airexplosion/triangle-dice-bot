@@ -32,16 +32,16 @@ export function registerAdminCommands(ctx: Context, deps: AdminDeps): void {
       const md = renderTaskAttrs(rs)
       const buttons: QQButton[][] = [
         [
-          { label: '混沌增加', data: '混沌增加 ', primary: true, type: 'input' },
-          { label: '混沌减少', data: '混沌减少 ', type: 'input' },
+          { label: '混沌+', data: '混沌增加 ', primary: true, type: 'input' },
+          { label: '混沌-', data: '混沌减少 ', type: 'input' },
         ],
         [
-          { label: '失败增加', data: '失败增加 ', type: 'input' },
-          { label: '失败减少', data: '失败减少 ', type: 'input' },
+          { label: '失败+', data: '失败增加 ', type: 'input' },
+          { label: '失败-', data: '失败减少 ', type: 'input' },
         ],
         [
-          { label: '散逸增加', data: '散逸增加 ', type: 'input' },
-          { label: '散逸减少', data: '散逸减少 ', type: 'input' },
+          { label: '散逸+', data: '散逸增加 ', type: 'input' },
+          { label: '散逸-', data: '散逸减少 ', type: 'input' },
         ],
       ]
       await reply(session, deps, md, buttons)
@@ -183,18 +183,18 @@ async function modifyCounter(
   // 增减按钮 type='input'（点了填输入框等用户补数字）；[任务属性] 默认 callback（按了直接处理）
   const buttons: QQButton[][] = [
     [
-      { label: '混沌增加', data: '混沌增加 ', primary: field === '混沌', type: 'input' },
-      { label: '混沌减少', data: '混沌减少 ', type: 'input' },
+      { label: '混沌+', data: '混沌增加 ', primary: field === '混沌', type: 'input' },
+      { label: '混沌-', data: '混沌减少 ', type: 'input' },
     ],
     [
-      { label: '失败增加', data: '失败增加 ', primary: field === '失败', type: 'input' },
-      { label: '失败减少', data: '失败减少 ', type: 'input' },
+      { label: '失败+', data: '失败增加 ', primary: field === '失败', type: 'input' },
+      { label: '失败-', data: '失败减少 ', type: 'input' },
     ],
     [
-      { label: '散逸增加', data: '散逸增加 ', primary: field === '散逸', type: 'input' },
-      { label: '散逸减少', data: '散逸减少 ', type: 'input' },
+      { label: '散逸+', data: '散逸增加 ', primary: field === '散逸', type: 'input' },
+      { label: '散逸-', data: '散逸减少 ', type: 'input' },
     ],
-    [{ label: '任务属性', data: '/任务属性', type: 'input', enter: true }],
+    [{ label: '属性', data: '/任务属性', type: 'input', enter: true }],
   ]
   await reply(session, deps, md, buttons)
 }
@@ -281,7 +281,7 @@ async function applyAdmin(
   }
 
   const buttons: QQButton[][] = [
-    [{ label: '同意管理', data: '/同意管理', primary: true, type: 'input', enter: true }],
+    [{ label: '同意', data: '/同意管理', primary: true, type: 'input', enter: true }],
   ]
   await reply(
     session,
