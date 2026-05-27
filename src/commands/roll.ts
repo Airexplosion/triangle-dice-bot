@@ -1,7 +1,15 @@
 import type { Context } from 'koishi'
 import { APTITUDE_NAMES, APTITUDE_SET } from '../const'
-import { calculateChaos, isTripleSublimation } from '../game/chaos'
-import { applyBurnout, countNonSuccesses, countSuccesses, roll6d4 } from '../game/dice'
+import { calculateChaos, isTripleSublimation, isUnleashActivated } from '../game/chaos'
+import {
+  applyBurnout,
+  countNonSuccesses,
+  countSuccesses,
+  d6ChaosCount,
+  d6ThreeCount,
+  roll6d4,
+  rollD6,
+} from '../game/dice'
 import { rawRoomIdOf, roomIdOf } from '../room'
 import type { PendingRoll } from '../types'
 import { sendQQMarkdown, type QQButton } from '../util/qq-markdown'
@@ -10,6 +18,31 @@ import type { PendingRollStore } from '../service/pending'
 import { fireDiceRoll, fireSyncChaos, fireSyncFailure, syncFromWeb } from '../service/sync'
 import type { WebClient } from '../service/web-client'
 import { isMissionMember } from '../util/mission'
+
+/** 从高墙文件名提取代码前缀，匹配 web 端 getFileCode：
+ *    "U2.md" → "U2"，"U2 规则破坏者.md" → "U2"，大小写归一。 */
+function fileCode(filename: string): string {
+  return filename.replace(/\.md$/i, '').split(' ')[0].toUpperCase()
+}
+
+/** 该 QQ 用户绑定的角色是否解锁了 U2（规则破坏者，d6 异常能力骰）。
+ *  web 不可用 / 未绑卡 / 网络失败 → 一律 false（安静降级，不打扰用户）。 */
+async function isU2Unlocked(
+  ctx: Context,
+  deps: RollDeps,
+  session: import('koishi').Session,
+): Promise<boolean> {
+  if (!deps.web || !session.userId) return false
+  try {
+    const groupId = session.isDirect ? undefined : rawRoomIdOf(session) ?? undefined
+    const r = await deps.web.getCharacterHighWalls(session.userId, groupId)
+    if (!r?.success || !r.highWalls) return false
+    return r.highWalls.some((w) => fileCode(w.filename) === 'U2')
+  } catch (e) {
+    ctx.logger('triangle').warn('isU2Unlocked failed: %s', (e as Error).message ?? e)
+    return false
+  }
+}
 
 export interface RollDeps {
   rooms: RoomStore
@@ -28,8 +61,8 @@ export function registerRollCommands(ctx: Context, deps: RollDeps): void {
     .action(async ({ session }, aptitude) => handle(ctx, deps, session, '现实修改', aptitude))
 
   ctx
-    .command('异常能力 <aptitude:string>', '使用异常能力触发骰点')
-    .action(async ({ session }, aptitude) => {
+    .command('异常能力 <aptitude:string> [d6mode:string]', '使用异常能力触发骰点')
+    .action(async ({ session }, aptitude, d6mode) => {
       if (!session) return
       // 不带参数：优先读角色异常能力列表，渲染"XX：资质"按钮 + 一个"常规异常"fallback
       if (!aptitude && !session.isDirect && deps.web && session.userId) {
@@ -65,7 +98,33 @@ export function registerRollCommands(ctx: Context, deps: RollDeps): void {
         await reply(session, deps, `# 异常能力\n\n请选择资质：`, buildAptitudeGrid('异常能力'))
         return
       }
-      return handle(ctx, deps, session, '异常能力', aptitude)
+      // d6mode：'d6' = 加 6 面骰，'nod6' = 显式不用（跳过提示），其它/缺省 = 看 U2 解锁状态决定
+      let useD6 = d6mode === 'd6'
+      const explicitD6 = d6mode === 'd6' || d6mode === 'nod6'
+      if (aptitude && APTITUDE_SET.has(aptitude) && !explicitD6 && !session.isDirect) {
+        if (await isU2Unlocked(ctx, deps, session)) {
+          await reply(
+            session,
+            deps,
+            [
+              `# 异常能力 · ${aptitude}`,
+              '',
+              '> 你已解锁 **U2 · 规则破坏者**',
+              '本次投骰是否加入额外的 **6 面骰**？',
+              '',
+              '> 1/2/4/5 → +1 混沌　3 → 算 1 个 3　6 → 算 2 个 3',
+            ].join('\n'),
+            [
+              [
+                { label: '用 6 面骰', data: `/异常能力 ${aptitude} d6`, primary: true, type: 'input', enter: true },
+                { label: '不用', data: `/异常能力 ${aptitude} nod6`, type: 'input', enter: true },
+              ],
+            ],
+          )
+          return
+        }
+      }
+      return handle(ctx, deps, session, '异常能力', aptitude, useD6)
     })
 }
 
@@ -77,6 +136,8 @@ async function handle(
   session: import('koishi').Session | undefined,
   trigger: Trigger,
   aptName: string | undefined,
+  /** 仅 trigger='异常能力' 时有意义。U2 解锁后用户选择是否加 d6。*/
+  useD6: boolean = false,
 ): Promise<void> {
   if (!session) return
 
@@ -152,11 +213,17 @@ async function handle(
     const burnout = isReality ? fcBefore + zeroPenalty : zeroPenalty
 
     const rawDice = roll6d4()
-    const rawTriple = isTripleSublimation(rawDice)
+    // d6（规则破坏者）：仅 异常能力 + U2 解锁 + 用户选择"用 6 面骰"时摇
+    const d6Roll: number | null = trigger === '异常能力' && useD6 ? rollD6() : null
+    const rawTriple = isTripleSublimation(rawDice, d6Roll)
+    const unleash = isUnleashActivated(rawDice, d6Roll)
     const burned = applyBurnout(rawDice, burnout)
-    const successes = countSuccesses(burned.dice)
+    // 显示 / 业务用的总成功数 = d4 成功 + d6 等效 3 数贡献
+    const successes = countSuccesses(burned.dice) + d6ThreeCount(d6Roll)
 
-    const chaosCalc = rawTriple ? 0 : calculateChaos(burned.dice, burned.unconsumed)
+    const chaosCalc = rawTriple
+      ? 0
+      : calculateChaos(burned.dice, burned.unconsumed, d6Roll)
     const isMember = isMissionMember(room, playerId)
 
     // 观察模式：骰子照算，但不影响混沌池 / 失败计数
@@ -181,6 +248,7 @@ async function handle(
       unconsumedBurnout: burned.unconsumed,
       createdAt: Date.now(),
       consumedAptitudes: {},
+      d6Roll,
     }
     deps.pending.set(roomId, playerId, pendingRoll)
 
@@ -203,6 +271,8 @@ async function handle(
       zeroPenalty,
       isReality,
       isMember,
+      d6Roll,
+      unleash,
     }
   })
 
@@ -238,6 +308,7 @@ interface RollResult {
   burnout: number
   burnedDice: number[]
   unconsumed: number
+  /** d4 成功数 + d6 等效 3 数贡献（已含 d6） */
   successes: number
   chaos: number
   chaosPool: number
@@ -247,6 +318,10 @@ interface RollResult {
   zeroPenalty: number
   isReality: boolean
   isMember: boolean
+  /** 规则破坏者：null = 未投，1-6 = 本次摇出的 d6 */
+  d6Roll: number | null
+  /** UNL3ASH：原始（d4 + d6）总 3 数 ≥ 7，在任何后修改前判定 */
+  unleash: boolean
 }
 
 export function formatDice(dice: readonly number[]): string {
@@ -307,6 +382,15 @@ function renderRollResult(r: RollResult): string {
   lines.push(`资质值　**${r.aptValue}**`)
   lines.push('')
   lines.push(`原始骰　**${formatDice(r.rawDice)}**`)
+  if (r.d6Roll !== null) {
+    const d6Add = d6ThreeCount(r.d6Roll)
+    const d6Chaos = d6ChaosCount(r.d6Roll)
+    let note: string
+    if (d6Add === 2) note = '算 2 个 3'
+    else if (d6Add === 1) note = '算 1 个 3'
+    else note = `+${d6Chaos} 混沌`
+    lines.push(`6 面骰　**${r.d6Roll}**（${note}）`)
+  }
 
   if (r.burnout > 0 || r.isReality) {
     const parts: string[] = []
@@ -325,12 +409,20 @@ function renderRollResult(r: RollResult): string {
 
   if (r.rawTriple) {
     lines.push('本次混沌　**0**　★ 三重升华 ★')
-  } else if (countSuccesses(r.burnedDice) === 3) {
-    lines.push('本次混沌　**0**（燃尽后恰好 3 个 3）')
+  } else if (r.chaos === 0) {
+    lines.push('本次混沌　**0**（燃尽后达成三重升华）')
   } else {
     const detail: string[] = [`${countNonSuccesses(r.burnedDice)} 非 3`]
     if (r.unconsumed > 0) detail.push(`${r.unconsumed} 未消耗燃尽`)
+    const d6Chaos = d6ChaosCount(r.d6Roll)
+    if (d6Chaos > 0) detail.push(`6 面骰 +${d6Chaos}`)
     lines.push(`本次混沌　**+${r.chaos}**（${detail.join(' + ')}）`)
+  }
+
+  if (r.unleash) {
+    lines.push('')
+    lines.push('> ★★★ **UNL3ASH 已激活** ★★★')
+    lines.push('> 一次掷骰中达成 7 个 3，触发 UNL3ASH。具体效果以经理处置。')
   }
 
   if (r.isMember) {

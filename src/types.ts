@@ -46,4 +46,10 @@ export interface PendingRoll {
   createdAt: number
   /** 本次骰点 + 后修改 累计消耗的资质（撤回时按此退还） */
   consumedAptitudes: Record<string, number>
+  /**
+   * U2 解锁后的额外 d6（规则破坏者）。
+   * null = 未使用 d6（普通骰点）；1-6 = 该次摇出的 d6 值。
+   * d6 不在 currentDice 池里，不被增/减成功修改，仅供后修改时重算混沌用。
+   */
+  d6Roll: number | null
 }

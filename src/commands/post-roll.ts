@@ -191,8 +191,9 @@ async function handle(
       }
     }
 
+    // 后修改重算混沌时要把 d6 也带上（d6 自己不在池里，但贡献的 3 数 / 混沌仍参与判定）
     const newSuccesses = countSuccesses(dice)
-    const newChaos = calculateChaos(dice, pending.unconsumedBurnout)
+    const newChaos = calculateChaos(dice, pending.unconsumedBurnout, pending.d6Roll)
     const isMember = isMissionMember(room, playerId)
     // 观察模式：不影响混沌池/失败计数；chaosDiff 仅用于显示
     const chaosDiff = isMember ? newChaos - oldChaos : 0
