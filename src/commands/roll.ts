@@ -566,7 +566,7 @@ function renderRollResult(r: RollResult): string {
   if (r.unleash) {
     lines.push('')
     lines.push('> ★★★ **UNL3ASH 已激活** ★★★')
-    lines.push('> 一次掷骰中达成 7 个 3，触发 UNL3ASH。具体效果以经理处置。')
+    lines.push('> 一次掷骰中恰好掷出 7 个 3，触发 UNL3ASH。具体效果以经理处置。')
   }
 
   if (r.isMember) {

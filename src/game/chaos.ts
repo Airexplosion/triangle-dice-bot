@@ -35,8 +35,16 @@ export function calculateChaos(
 }
 
 /**
- * UNL3ASH 激活：原始总 3 数（d4 + d6 + d10 贡献）≥ 7。需在任何后修改前判定。
- * d10=3 触发的"直接失败"会阻断 UNL3ASH（无成功）。
+ * UNL3ASH 激活：原始总 3 数（d4 + d6 + d10 贡献）**恰好 == 7**。
+ * 需在任何后修改前判定。d10=3 触发的"直接失败"阻断 UNL3ASH。
+ *
+ * 边界：
+ *   - 6 d4-3 + d6=3 = 7 → ✅
+ *   - 5 d4-3 + d6=6 = 7 → ✅
+ *   - 6 d4-3 + d6=6 = 8 → ❌（超过 7）
+ *   - d10=7 单骰 = 7 → ✅
+ *   - d10=8/9/10 单骰 → ❌（超过 7）
+ *   - d10=5 + d6=6 = 7 → ✅
  */
 export function isUnleashActivated(
   rawDice: readonly number[],
@@ -44,5 +52,5 @@ export function isUnleashActivated(
   d10: number | null = null,
 ): boolean {
   if (isD10Failure(d10)) return false
-  return countSuccesses(rawDice) + d6ThreeCount(d6) + d10ThreeCount(d10) >= 7
+  return countSuccesses(rawDice) + d6ThreeCount(d6) + d10ThreeCount(d10) === 7
 }

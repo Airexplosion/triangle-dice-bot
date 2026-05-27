@@ -96,16 +96,18 @@ describe('calculateChaos with d6', () => {
 })
 
 describe('isUnleashActivated', () => {
-  it('≥ 7 total threes triggers UNL3ASH', () => {
-    // 6 d4-3 + d6=3 → 7 → yes
+  it('恰好 7 total threes → UNL3ASH', () => {
+    // 6 d4-3 + d6=3 → 7
     expect(isUnleashActivated([3, 3, 3, 3, 3, 3], 3)).toBe(true)
-    // 5 d4-3 + d6=6 → 7 → yes
+    // 5 d4-3 + d6=6 → 7
     expect(isUnleashActivated([3, 3, 3, 3, 3, 1], 6)).toBe(true)
-    // 6 d4-3 + d6=6 → 8 → yes
-    expect(isUnleashActivated([3, 3, 3, 3, 3, 3], 6)).toBe(true)
   })
-  it('< 7 total threes → no UNL3ASH', () => {
-    expect(isUnleashActivated([3, 3, 3, 3, 3, 3], null)).toBe(false)
+  it('> 7（超过） → 不激活', () => {
+    // 6 d4-3 + d6=6 → 8 → 超过
+    expect(isUnleashActivated([3, 3, 3, 3, 3, 3], 6)).toBe(false)
+  })
+  it('< 7 → 不激活', () => {
+    expect(isUnleashActivated([3, 3, 3, 3, 3, 3], null)).toBe(false) // 6
     expect(isUnleashActivated([3, 3, 3, 3, 3, 1], 3)).toBe(false) // 5 + 1 = 6
     expect(isUnleashActivated([3, 3, 3, 1, 2, 4], 6)).toBe(false) // 3 + 2 = 5
   })
@@ -132,17 +134,27 @@ describe('d10ThreeCount / d10ChaosCount / isD10Failure', () => {
 })
 
 describe('isUnleashActivated with d10', () => {
-  it('d10=7 alone → UNL3ASH', () => {
+  it('d10=7 alone = 7 个 3 → UNL3ASH', () => {
     expect(isUnleashActivated([], null, 7)).toBe(true)
   })
-  it('d10=10 alone → UNL3ASH', () => {
-    expect(isUnleashActivated([], null, 10)).toBe(true)
+  it('d10=10 alone = 10 个 3 → 超过 7 不激活', () => {
+    expect(isUnleashActivated([], null, 10)).toBe(false)
   })
-  it('d10=6 alone → no (only 6 个 3)', () => {
+  it('d10=8/9 alone → 超过 7 不激活', () => {
+    expect(isUnleashActivated([], null, 8)).toBe(false)
+    expect(isUnleashActivated([], null, 9)).toBe(false)
+  })
+  it('d10=6 alone = 6 个 3 → 不足，不激活', () => {
     expect(isUnleashActivated([], null, 6)).toBe(false)
   })
   it('d10=5 + d6=6 = 7 → UNL3ASH', () => {
     expect(isUnleashActivated([], 6, 5)).toBe(true)
+  })
+  it('d10=6 + d6=3 = 7 → UNL3ASH', () => {
+    expect(isUnleashActivated([], 3, 6)).toBe(true)
+  })
+  it('d10=7 + d6=3 = 8 → 超过，不激活', () => {
+    expect(isUnleashActivated([], 3, 7)).toBe(false)
   })
   it('d10=3 failure → never UNL3ASH', () => {
     expect(isUnleashActivated([], 6, 3)).toBe(false)
