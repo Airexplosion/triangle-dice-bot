@@ -257,6 +257,17 @@ export class WebClient {
   ): Promise<CharacterAnomaliesResp | null> {
     return this.getJson('/api/bot/character-anomalies', { qqOpenid, qqGroupOpenid })
   }
+
+  /**
+   * 查询绑定角色已解锁的高墙文件清单。
+   * 4xx（如未绑定 QQ）→ \{ success: false, error \}；5xx / 网络 → null。
+   */
+  getCharacterHighWalls(
+    qqOpenid: string,
+    qqGroupOpenid?: string,
+  ): Promise<CharacterHighWallsResp | null> {
+    return this.getJson('/api/bot/character-high-walls', { qqOpenid, qqGroupOpenid })
+  }
 }
 
 // ─── Internal helpers ────────────────────────────────────────────
@@ -476,6 +487,24 @@ export interface CharacterAnomaliesResp {
     qualName: string | null
     trigger: string | null
     trained: boolean
+  }>
+  error?: string
+}
+
+export interface CharacterHighWallsResp {
+  success: boolean
+  characterId?: string | number
+  characterName?: string
+  highWalls?: Array<{
+    /** 数据库存的文件名，可能是旧格式 "X2.md" 或新格式 "X2 赛风商店.md" */
+    filename: string
+    /** filename 去掉 .md 后缀，做显示兜底 */
+    title: string
+    /** high_wall_files 表的 display_name（可能为 null）*/
+    displayName: string | null
+    description: string | null
+    /** high_wall_files.is_active；该 filename 在主表里没有时为 null */
+    isActive: boolean | null
   }>
   error?: string
 }
