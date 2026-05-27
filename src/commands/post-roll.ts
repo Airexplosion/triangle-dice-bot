@@ -330,13 +330,13 @@ function renderPostRollButtons(o: PostRollOutcome): QQButton[][] {
   const buttons: QQButton[][] = []
   const row: QQButton[] = []
   if (o.pendingRemainingNonThrees > 0) {
-    row.push({ label: '增加成功 1', data: '增加成功 1', primary: true })
+    row.push({ label: '增加成功 1', data: '/增加成功 1', primary: true, type: 'input', enter: true })
   }
   if (o.pendingRemainingThrees > 0) {
-    row.push({ label: '减少成功 1', data: '减少成功 1' })
+    row.push({ label: '减少成功 1', data: '/减少成功 1', type: 'input', enter: true })
   }
   if (row.length > 0) buttons.push(row)
-  buttons.push([{ label: '撤回骰点', data: '撤回骰点' }])
+  buttons.push([{ label: '撤回骰点', data: '/撤回骰点', type: 'input', enter: true }])
   return buttons
 }
 

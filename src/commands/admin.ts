@@ -194,7 +194,7 @@ async function modifyCounter(
       { label: '散逸增加', data: '散逸增加 ', primary: field === '散逸', type: 'input' },
       { label: '散逸减少', data: '散逸减少 ', type: 'input' },
     ],
-    [{ label: '任务属性', data: '任务属性' }],
+    [{ label: '任务属性', data: '/任务属性', type: 'input', enter: true }],
   ]
   await reply(session, deps, md, buttons)
 }
@@ -281,7 +281,7 @@ async function applyAdmin(
   }
 
   const buttons: QQButton[][] = [
-    [{ label: '同意管理', data: '同意管理', primary: true }],
+    [{ label: '同意管理', data: '/同意管理', primary: true, type: 'input', enter: true }],
   ]
   await reply(
     session,

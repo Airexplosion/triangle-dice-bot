@@ -39,12 +39,14 @@ export function registerRollCommands(ctx: Context, deps: RollDeps): void {
               buttons.push(
                 valid.slice(i, i + 2).map((a) => ({
                   label: `${a.name}：${a.qualName!}`,
-                  // 直接复用 6D4 路径：callback "异常能力 <资质>"
-                  data: `异常能力 ${a.qualName!}`,
+                  // 直接复用 6D4 路径：input+enter "/异常能力 <资质>"
+                  data: `/异常能力 ${a.qualName!}`,
+                  type: 'input' as const,
+                  enter: true,
                 })),
               )
             }
-            buttons.push([{ label: '常规异常', data: '异常能力 __GRID__' }])
+            buttons.push([{ label: '常规异常', data: '/异常能力 __GRID__', type: 'input', enter: true }])
             const head = resp.characterName
               ? `# 异常能力（${resp.characterName}）\n\n点击触发：`
               : '# 异常能力\n\n点击触发：'
@@ -254,7 +256,9 @@ function buildAptitudeGrid(trigger: Trigger): QQButton[][] {
     rows.push(
       APTITUDE_NAMES.slice(i, i + 3).map((name) => ({
         label: name,
-        data: `${trigger} ${name}`,
+        data: `/${trigger} ${name}`,
+        type: 'input' as const,
+        enter: true,
       })),
     )
   }
@@ -344,14 +348,16 @@ function renderRollResult(r: RollResult): string {
 function renderRollButtons(r: RollResult): QQButton[][] {
   return [
     [
-      { label: '增加成功 1', data: '增加成功 1', primary: true },
-      { label: '减少成功 1', data: '减少成功 1' },
+      { label: '增加成功 1', data: '/增加成功 1', primary: true, type: 'input', enter: true },
+      { label: '减少成功 1', data: '/减少成功 1', type: 'input', enter: true },
     ],
     [
-      { label: '撤回骰点', data: '撤回骰点' },
+      { label: '撤回骰点', data: '/撤回骰点', type: 'input', enter: true },
       {
         label: `再投 ${r.trigger} ${r.aptName}`,
-        data: `${r.trigger} ${r.aptName}`,
+        data: `/${r.trigger} ${r.aptName}`,
+        type: 'input',
+        enter: true,
       },
     ],
   ]

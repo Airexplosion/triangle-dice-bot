@@ -87,9 +87,9 @@ export function registerCommands(ctx: Context, deps: CommandDeps): void {
   // 用户已在 Koishi 控制台禁用 @koishijs/plugin-help，'帮助' 名字可用
   const helpButtons: QQButton[][] = [
     [
-      { label: '查看任务', data: '查看任务' },
-      { label: '查询角色', data: '查询角色' },
-      { label: '查询状态', data: '查询状态' },
+      { label: '查看任务', data: '/查看任务', type: 'input', enter: true },
+      { label: '查询角色', data: '/查询角色', type: 'input', enter: true },
+      { label: '查询状态', data: '/查询状态', type: 'input', enter: true },
     ],
   ]
   ctx

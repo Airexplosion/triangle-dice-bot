@@ -21,6 +21,12 @@ export interface QQButton {
   data: string
   /** primary=true 用蓝底高亮按钮 */
   primary?: boolean
+  /**
+   * 仅对 type='input' 有意义：
+   *   false（默认）— data 填到输入框，等用户继续编辑（适合带参命令，如 "混沌增加 "）
+   *   true         — data 填到输入框并自动以用户身份发送（适合无参命令的"快捷触发"）
+   */
+  enter?: boolean
 }
 
 export interface SendQQMarkdownOptions {
@@ -206,8 +212,8 @@ function buildKeyboard(rows?: QQButton[][]): QQKeyboard | undefined {
               type: actionType,
               permission: { type: 2 }, // 所有人可点
               data: btn.data,
-              // input 模式必须显式 enter:false 让 QQ 不直接发，留到输入框
-              ...(actionType === 2 ? { enter: false } : {}),
+              // input 模式：enter 由调用方决定（默认 false，即填到输入框不直接发）
+              ...(actionType === 2 ? { enter: btn.enter === true } : {}),
             },
           }
         }),
