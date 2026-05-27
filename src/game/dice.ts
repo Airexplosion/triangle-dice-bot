@@ -82,3 +82,32 @@ export function d6ChaosCount(d6: number | null): number {
   if (d6 === null || d6 === 3 || d6 === 6) return 0
   return 1
 }
+
+// ───────── d10（"无名"骰）─────────
+// N1 解锁后可在 异常能力 投骰时**代替**六颗 d4：
+//   N 面 → N 个 3 + N 点混沌（与摇出数字匹配）
+//   d10=3 特殊：失败（成功数置 0），但仍 3 点混沌；不可达成三重升华
+//   d10=7 且为唯一掷出骰子 → 自动激活 UNL3ASH（与 d6 组合时按总 3 数判定）
+// d10 可与 d6 组合，但不与 6D4 共存。
+
+export function rollD10(rng: Rng = defaultRng): number {
+  return randInt(1, 10, rng)
+}
+
+/** d10 等效的"3 数量"贡献。d10=3 → 0（失败），其余 = 面值。 */
+export function d10ThreeCount(d10: number | null): number {
+  if (d10 === null) return 0
+  if (d10 === 3) return 0
+  return d10
+}
+
+/** d10 等效的"混沌"贡献。永远 = 面值（含 d10=3 → 3）。 */
+export function d10ChaosCount(d10: number | null): number {
+  if (d10 === null) return 0
+  return d10
+}
+
+/** d10=3 触发的"直接失败"。 */
+export function isD10Failure(d10: number | null): boolean {
+  return d10 === 3
+}

@@ -1,6 +1,12 @@
 import { describe, it, expect } from 'vitest'
 import { calculateChaos, isTripleSublimation, isUnleashActivated } from '../src/game/chaos'
-import { d6ChaosCount, d6ThreeCount } from '../src/game/dice'
+import {
+  d6ChaosCount,
+  d6ThreeCount,
+  d10ChaosCount,
+  d10ThreeCount,
+  isD10Failure,
+} from '../src/game/dice'
 
 describe('isTripleSublimation', () => {
   it('is true iff exactly 3 threes', () => {
@@ -102,5 +108,44 @@ describe('isUnleashActivated', () => {
     expect(isUnleashActivated([3, 3, 3, 3, 3, 3], null)).toBe(false)
     expect(isUnleashActivated([3, 3, 3, 3, 3, 1], 3)).toBe(false) // 5 + 1 = 6
     expect(isUnleashActivated([3, 3, 3, 1, 2, 4], 6)).toBe(false) // 3 + 2 = 5
+  })
+})
+
+// ───────── d10 / "无名"骰 ─────────
+
+describe('d10ThreeCount / d10ChaosCount / isD10Failure', () => {
+  it('maps d10 face to 3-count (failure on 3) and chaos = face', () => {
+    expect(d10ThreeCount(1)).toBe(1)
+    expect(d10ThreeCount(2)).toBe(2)
+    expect(d10ThreeCount(3)).toBe(0)
+    expect(d10ThreeCount(7)).toBe(7)
+    expect(d10ThreeCount(10)).toBe(10)
+    expect(d10ThreeCount(null)).toBe(0)
+
+    for (let f = 1; f <= 10; f++) expect(d10ChaosCount(f)).toBe(f)
+    expect(d10ChaosCount(null)).toBe(0)
+
+    expect(isD10Failure(3)).toBe(true)
+    for (const f of [1, 2, 4, 5, 6, 7, 8, 9, 10]) expect(isD10Failure(f)).toBe(false)
+    expect(isD10Failure(null)).toBe(false)
+  })
+})
+
+describe('isUnleashActivated with d10', () => {
+  it('d10=7 alone → UNL3ASH', () => {
+    expect(isUnleashActivated([], null, 7)).toBe(true)
+  })
+  it('d10=10 alone → UNL3ASH', () => {
+    expect(isUnleashActivated([], null, 10)).toBe(true)
+  })
+  it('d10=6 alone → no (only 6 个 3)', () => {
+    expect(isUnleashActivated([], null, 6)).toBe(false)
+  })
+  it('d10=5 + d6=6 = 7 → UNL3ASH', () => {
+    expect(isUnleashActivated([], 6, 5)).toBe(true)
+  })
+  it('d10=3 failure → never UNL3ASH', () => {
+    expect(isUnleashActivated([], 6, 3)).toBe(false)
+    expect(isUnleashActivated([], 3, 3)).toBe(false)
   })
 })

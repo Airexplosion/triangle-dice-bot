@@ -52,4 +52,10 @@ export interface PendingRoll {
    * d6 不在 currentDice 池里，不被增/减成功修改，仅供后修改时重算混沌用。
    */
   d6Roll: number | null
+  /**
+   * N1 解锁后的 d10（"无名"骰）。
+   * null = 未使用；1-10 = 摇出的 d10 值。
+   * d10 模式下 currentDice 为空，6D4 / 燃尽 / 增减成功 都不参与。
+   */
+  d10Roll: number | null
 }

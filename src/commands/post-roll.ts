@@ -149,6 +149,16 @@ async function handle(
     return
   }
 
+  // d10 模式：没有 d4 池可改，按规则 d10 面只能用 QA / 申诫 调整（不走 bot）
+  if (pending.d10Roll !== null) {
+    await reply(
+      session,
+      deps,
+      '> d10 模式下不支持 **增加成功 / 减少成功**。\n> 请用 QA / 申诫调整 d10 面（机制不在 bot 内）。',
+    )
+    return
+  }
+
   // 修改前从 web 拉最新混沌/燃尽
   await syncFromWeb(deps.web, deps.rooms, session)
 

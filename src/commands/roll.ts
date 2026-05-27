@@ -7,8 +7,12 @@ import {
   countSuccesses,
   d6ChaosCount,
   d6ThreeCount,
+  d10ChaosCount,
+  d10ThreeCount,
+  isD10Failure,
   roll6d4,
   rollD6,
+  rollD10,
 } from '../game/dice'
 import { rawRoomIdOf, roomIdOf } from '../room'
 import type { PendingRoll } from '../types'
@@ -25,22 +29,45 @@ function fileCode(filename: string): string {
   return filename.replace(/\.md$/i, '').split(' ')[0].toUpperCase()
 }
 
-/** 该 QQ 用户绑定的角色是否解锁了 U2（规则破坏者，d6 异常能力骰）。
- *  web 不可用 / 未绑卡 / 网络失败 → 一律 false（安静降级，不打扰用户）。 */
-async function isU2Unlocked(
+/** 该 QQ 用户绑定的角色解锁了哪些"额外骰"高墙。
+ *  web 不可用 / 未绑卡 / 网络失败 → 一律全 false（安静降级，不打扰用户）。 */
+async function getDiceUnlocks(
   ctx: Context,
   deps: RollDeps,
   session: import('koishi').Session,
-): Promise<boolean> {
-  if (!deps.web || !session.userId) return false
+): Promise<{ u2: boolean; n1: boolean }> {
+  if (!deps.web || !session.userId) return { u2: false, n1: false }
   try {
     const groupId = session.isDirect ? undefined : rawRoomIdOf(session) ?? undefined
     const r = await deps.web.getCharacterHighWalls(session.userId, groupId)
-    if (!r?.success || !r.highWalls) return false
-    return r.highWalls.some((w) => fileCode(w.filename) === 'U2')
+    if (!r?.success || !r.highWalls) return { u2: false, n1: false }
+    const codes = new Set(r.highWalls.map((w) => fileCode(w.filename)))
+    return { u2: codes.has('U2'), n1: codes.has('N1') }
   } catch (e) {
-    ctx.logger('triangle').warn('isU2Unlocked failed: %s', (e as Error).message ?? e)
-    return false
+    ctx.logger('triangle').warn('getDiceUnlocks failed: %s', (e as Error).message ?? e)
+    return { u2: false, n1: false }
+  }
+}
+
+/**
+ * diceMode 解析：
+ *   'd4'           — 6 颗 d4（默认/不带额外骰）
+ *   'd6'           — 6 颗 d4 + 1 颗 d6
+ *   'd10'          — 仅 1 颗 d10（取代 6D4）
+ *   'd10d6'        — 1 颗 d10 + 1 颗 d6（取代 6D4）
+ *   'nod6'         — 旧 alias，同 'd4'（避免破坏 U2 早期发出的按钮）
+ *   其它 / 未给    — 调用方负责决定要不要弹选项面板
+ */
+const EXPLICIT_DICE_MODES = new Set(['d4', 'd6', 'd10', 'd10d6', 'nod6'])
+interface DiceChoice {
+  useD6: boolean
+  useD10: boolean
+}
+function parseDiceMode(mode: string | undefined): DiceChoice | null {
+  if (!mode || !EXPLICIT_DICE_MODES.has(mode)) return null
+  return {
+    useD6: mode === 'd6' || mode === 'd10d6',
+    useD10: mode === 'd10' || mode === 'd10d6',
   }
 }
 
@@ -61,8 +88,8 @@ export function registerRollCommands(ctx: Context, deps: RollDeps): void {
     .action(async ({ session }, aptitude) => handle(ctx, deps, session, '现实修改', aptitude))
 
   ctx
-    .command('异常能力 <aptitude:string> [d6mode:string]', '使用异常能力触发骰点')
-    .action(async ({ session }, aptitude, d6mode) => {
+    .command('异常能力 <aptitude:string> [diceMode:string]', '使用异常能力触发骰点')
+    .action(async ({ session }, aptitude, diceMode) => {
       if (!session) return
       // 不带参数：优先读角色异常能力列表，渲染"XX：资质"按钮 + 一个"常规异常"fallback
       if (!aptitude && !session.isDirect && deps.web && session.userId) {
@@ -98,34 +125,76 @@ export function registerRollCommands(ctx: Context, deps: RollDeps): void {
         await reply(session, deps, `# 异常能力\n\n请选择资质：`, buildAptitudeGrid('异常能力'))
         return
       }
-      // d6mode：'d6' = 加 6 面骰，'nod6' = 显式不用（跳过提示），其它/缺省 = 看 U2 解锁状态决定
-      let useD6 = d6mode === 'd6'
-      const explicitD6 = d6mode === 'd6' || d6mode === 'nod6'
-      if (aptitude && APTITUDE_SET.has(aptitude) && !explicitD6 && !session.isDirect) {
-        if (await isU2Unlocked(ctx, deps, session)) {
-          await reply(
-            session,
-            deps,
-            [
-              `# 异常能力 · ${aptitude}`,
-              '',
-              '> 你已解锁 **U2 · 规则破坏者**',
-              '本次投骰是否加入额外的 **6 面骰**？',
-              '',
-              '> 1/2/4/5 → +1 混沌　3 → 算 1 个 3　6 → 算 2 个 3',
-            ].join('\n'),
-            [
-              [
-                { label: '用 6 面骰', data: `/异常能力 ${aptitude} d6`, primary: true, type: 'input', enter: true },
-                { label: '不用', data: `/异常能力 ${aptitude} nod6`, type: 'input', enter: true },
-              ],
-            ],
-          )
+      // diceMode 已显式给出 → 直接走骰
+      const explicit = parseDiceMode(diceMode)
+      if (explicit) {
+        return handle(ctx, deps, session, '异常能力', aptitude, explicit)
+      }
+      // 否则按 U2 / N1 解锁状态弹"选骰面板"
+      if (aptitude && APTITUDE_SET.has(aptitude) && !session.isDirect) {
+        const unlocks = await getDiceUnlocks(ctx, deps, session)
+        if (unlocks.u2 || unlocks.n1) {
+          await replyDiceChoicePanel(session, deps, aptitude, unlocks)
           return
         }
       }
-      return handle(ctx, deps, session, '异常能力', aptitude, useD6)
+      return handle(ctx, deps, session, '异常能力', aptitude, { useD6: false, useD10: false })
     })
+}
+
+/**
+ * 弹"骰子选择面板"。根据解锁情况显示不同组合的按钮：
+ *   - 仅 U2 → [用 6 面骰] [不用]                （兼容之前 UX）
+ *   - 仅 N1 → [用 10 面骰] [不用]
+ *   - 都解锁 → 四按钮二乘二网格：[仅 d4] [+ d6] / [d10] [d10 + d6]
+ */
+async function replyDiceChoicePanel(
+  session: import('koishi').Session,
+  deps: RollDeps,
+  aptitude: string,
+  unlocks: { u2: boolean; n1: boolean },
+): Promise<void> {
+  const cmd = (mode: string) => `/异常能力 ${aptitude} ${mode}`
+  const head = [`# 异常能力 · ${aptitude}`]
+  const buttons: QQButton[][] = []
+
+  if (unlocks.u2 && unlocks.n1) {
+    head.push('', '> 你已解锁 **N1 · 十面骰** 与 **U2 · 规则破坏者**')
+    head.push('选择本次投骰使用的骰子组合：')
+    head.push('')
+    head.push('> d4：6 颗四面骰（原版）')
+    head.push('> + d6：6 颗 d4 加 1 颗 d6')
+    head.push('> d10：1 颗 d10 代替 6 颗 d4')
+    head.push('> d10+d6：d10 + 1 颗 d6')
+    buttons.push([
+      { label: '仅 d4', data: cmd('d4'), type: 'input', enter: true },
+      { label: '+ d6', data: cmd('d6'), type: 'input', enter: true },
+    ])
+    buttons.push([
+      { label: 'd10', data: cmd('d10'), primary: true, type: 'input', enter: true },
+      { label: 'd10 + d6', data: cmd('d10d6'), primary: true, type: 'input', enter: true },
+    ])
+  } else if (unlocks.n1) {
+    head.push('', '> 你已解锁 **N1 · 十面骰**')
+    head.push('本次投骰是否用 **10 面骰**（取代 6 颗 d4）？')
+    head.push('')
+    head.push('> N 面 → N 个 3 + N 点混沌　3 = 直接失败，禁三重升华')
+    buttons.push([
+      { label: '用 10 面骰', data: cmd('d10'), primary: true, type: 'input', enter: true },
+      { label: '不用', data: cmd('d4'), type: 'input', enter: true },
+    ])
+  } else {
+    // 仅 U2
+    head.push('', '> 你已解锁 **U2 · 规则破坏者**')
+    head.push('本次投骰是否加入额外的 **6 面骰**？')
+    head.push('')
+    head.push('> 1/2/4/5 → +1 混沌　3 → 算 1 个 3　6 → 算 2 个 3')
+    buttons.push([
+      { label: '用 6 面骰', data: cmd('d6'), primary: true, type: 'input', enter: true },
+      { label: '不用', data: cmd('d4'), type: 'input', enter: true },
+    ])
+  }
+  await reply(session, deps, head.join('\n'), buttons)
 }
 
 type Trigger = '现实修改' | '异常能力'
@@ -136,8 +205,8 @@ async function handle(
   session: import('koishi').Session | undefined,
   trigger: Trigger,
   aptName: string | undefined,
-  /** 仅 trigger='异常能力' 时有意义。U2 解锁后用户选择是否加 d6。*/
-  useD6: boolean = false,
+  /** 仅 trigger='异常能力' 时有意义。U2 / N1 解锁后由用户在面板上选择。 */
+  diceChoice: DiceChoice = { useD6: false, useD10: false },
 ): Promise<void> {
   if (!session) return
 
@@ -212,18 +281,54 @@ async function handle(
     const fcBefore = room.failureCount
     const burnout = isReality ? fcBefore + zeroPenalty : zeroPenalty
 
-    const rawDice = roll6d4()
-    // d6（规则破坏者）：仅 异常能力 + U2 解锁 + 用户选择"用 6 面骰"时摇
-    const d6Roll: number | null = trigger === '异常能力' && useD6 ? rollD6() : null
-    const rawTriple = isTripleSublimation(rawDice, d6Roll)
-    const unleash = isUnleashActivated(rawDice, d6Roll)
-    const burned = applyBurnout(rawDice, burnout)
-    // 显示 / 业务用的总成功数 = d4 成功 + d6 等效 3 数贡献
-    const successes = countSuccesses(burned.dice) + d6ThreeCount(d6Roll)
+    // d6 / d10 仅在 异常能力 + 用户选择时摇
+    const d6Roll: number | null =
+      trigger === '异常能力' && diceChoice.useD6 ? rollD6() : null
+    const d10Roll: number | null =
+      trigger === '异常能力' && diceChoice.useD10 ? rollD10() : null
+    const useD10 = d10Roll !== null
+    const d10Failure = isD10Failure(d10Roll)
 
-    const chaosCalc = rawTriple
-      ? 0
-      : calculateChaos(burned.dice, burned.unconsumed, d6Roll)
+    let rawDice: number[]
+    let burnedDice: number[]
+    let unconsumed: number
+    let rawTriple: boolean
+    let successes: number
+    let chaosCalc: number
+    let unleash: boolean
+    // d10 模式下记录燃尽后剩多少个 3（用于显示）
+    let d10ThreesAfterBurnout = 0
+
+    if (useD10) {
+      // ─── d10 模式：取代 6D4 ───
+      // 规则：d10 创造 N 个 3 + N 点混沌；d10=3 直接失败；不可达成三重升华；
+      //       燃尽像通常一样减少 3 数并增加混沌（最终：d10 混沌 = d10 面值 + 燃尽量）
+      rawDice = []
+      burnedDice = []
+      rawTriple = false
+      const d10ThreesRaw = d10ThreeCount(d10Roll) // d10=3 → 0
+      const consumed = Math.min(burnout, d10ThreesRaw)
+      d10ThreesAfterBurnout = d10ThreesRaw - consumed
+      unconsumed = burnout - consumed
+      // 失败覆盖：d10=3 → 任何其他骰子结果都视为 0 成功
+      successes = d10Failure ? 0 : d10ThreesAfterBurnout + d6ThreeCount(d6Roll)
+      // 混沌：d10 面值 + 燃尽全量 + d6 混沌
+      chaosCalc = d10ChaosCount(d10Roll) + burnout + d6ChaosCount(d6Roll)
+      unleash = isUnleashActivated(rawDice, d6Roll, d10Roll)
+    } else {
+      // ─── 常规模式：6D4 (+ d6) ───
+      rawDice = roll6d4()
+      rawTriple = isTripleSublimation(rawDice, d6Roll)
+      const burned = applyBurnout(rawDice, burnout)
+      burnedDice = burned.dice
+      unconsumed = burned.unconsumed
+      successes = countSuccesses(burned.dice) + d6ThreeCount(d6Roll)
+      chaosCalc = rawTriple
+        ? 0
+        : calculateChaos(burned.dice, burned.unconsumed, d6Roll)
+      unleash = isUnleashActivated(rawDice, d6Roll, null)
+    }
+
     const isMember = isMissionMember(room, playerId)
 
     // 观察模式：骰子照算，但不影响混沌池 / 失败计数
@@ -242,13 +347,14 @@ async function handle(
       playerId,
       trigger,
       aptitudeName: aptName,
-      currentDice: [...burned.dice],
+      currentDice: useD10 ? [] : [...burnedDice],
       chaosApplied,
       failureIncremented,
-      unconsumedBurnout: burned.unconsumed,
+      unconsumedBurnout: unconsumed,
       createdAt: Date.now(),
       consumedAptitudes: {},
       d6Roll,
+      d10Roll,
     }
     deps.pending.set(roomId, playerId, pendingRoll)
 
@@ -259,8 +365,8 @@ async function handle(
       rawDice,
       rawTriple,
       burnout,
-      burnedDice: burned.dice,
-      unconsumed: burned.unconsumed,
+      burnedDice,
+      unconsumed,
       successes,
       // 显示用的"本次混沌"：观察模式仍用计算值（让玩家看到自己骰出来多少），但 chaosApplied=0
       chaos: chaosCalc,
@@ -272,6 +378,9 @@ async function handle(
       isReality,
       isMember,
       d6Roll,
+      d10Roll,
+      d10ThreesAfterBurnout,
+      d10Failure,
       unleash,
     }
   })
@@ -303,12 +412,15 @@ interface RollResult {
   trigger: Trigger
   aptName: string
   aptValue: number
+  /** d10 模式下为 [] */
   rawDice: number[]
+  /** d4 模式：raw 即 3 个 3；d10 模式恒为 false */
   rawTriple: boolean
   burnout: number
+  /** d10 模式下为 [] */
   burnedDice: number[]
   unconsumed: number
-  /** d4 成功数 + d6 等效 3 数贡献（已含 d6） */
+  /** d4 / d6 / d10 综合后的总成功数（已扣 d10=3 失败 override） */
   successes: number
   chaos: number
   chaosPool: number
@@ -320,7 +432,13 @@ interface RollResult {
   isMember: boolean
   /** 规则破坏者：null = 未投，1-6 = 本次摇出的 d6 */
   d6Roll: number | null
-  /** UNL3ASH：原始（d4 + d6）总 3 数 ≥ 7，在任何后修改前判定 */
+  /** "无名"骰：null = 未投，1-10 = 本次摇出的 d10 */
+  d10Roll: number | null
+  /** d10 模式燃尽后剩多少个 3（仅 d10 模式有意义） */
+  d10ThreesAfterBurnout: number
+  /** d10=3 强制失败 */
+  d10Failure: boolean
+  /** UNL3ASH：原始（d4 + d6 + d10）总 3 数 ≥ 7，在任何后修改前判定 */
   unleash: boolean
 }
 
@@ -369,7 +487,7 @@ function mapWebAttrsToAptitudes(
 function renderRollResult(r: RollResult): string {
   const lines: string[] = []
   lines.push(`# ${r.trigger} · ${r.aptName}`)
-  // 三重升华专属横幅图：标题正下方
+  // 三重升华专属横幅图：标题正下方（d10 模式不可三重升华，rawTriple 恒 false，自然不显示）
   if (r.rawTriple) {
     lines.push('')
     lines.push(`![三重升华 #500px #126px](${TRIPLE_SUBLIMATION_IMG})`)
@@ -381,42 +499,68 @@ function renderRollResult(r: RollResult): string {
   lines.push('')
   lines.push(`资质值　**${r.aptValue}**`)
   lines.push('')
-  lines.push(`原始骰　**${formatDice(r.rawDice)}**`)
-  if (r.d6Roll !== null) {
-    const d6Add = d6ThreeCount(r.d6Roll)
+
+  if (r.d10Roll !== null) {
+    // ─── d10 模式渲染 ───
+    if (r.d10Failure) {
+      lines.push(`10 面骰　**${r.d10Roll}**　★ 直接失败 ★（+3 混沌）`)
+    } else {
+      const n = d10ThreeCount(r.d10Roll)
+      lines.push(`10 面骰　**${r.d10Roll}**（${n} 个 3 + ${d10ChaosCount(r.d10Roll)} 混沌）`)
+    }
+    if (r.d6Roll !== null) {
+      lines.push(renderD6Line(r.d6Roll))
+    }
+    if (r.burnout > 0) {
+      const parts: string[] = []
+      if (r.isReality) parts.push(`失败计数 ${r.fcBefore}`)
+      parts.push(`资质补正 ${r.zeroPenalty}`)
+      lines.push(`燃尽　**${r.burnout}**（${parts.join(' + ')}）`)
+      const consumed = r.burnout - r.unconsumed
+      if (!r.d10Failure && consumed > 0) {
+        lines.push(`燃尽后 10 面骰　**${r.d10ThreesAfterBurnout} 个 3**（转换 ${consumed} 个 3）`)
+      } else if (r.unconsumed > 0) {
+        lines.push(`未消耗燃尽 **${r.unconsumed}** → +${r.unconsumed} 混沌`)
+      }
+    }
+    lines.push('')
+    lines.push(`成功数　**${r.successes}**`)
+    const chaosParts: string[] = [`10 面骰 ${d10ChaosCount(r.d10Roll)}`]
+    if (r.burnout > 0) chaosParts.push(`燃尽 ${r.burnout}`)
     const d6Chaos = d6ChaosCount(r.d6Roll)
-    let note: string
-    if (d6Add === 2) note = '算 2 个 3'
-    else if (d6Add === 1) note = '算 1 个 3'
-    else note = `+${d6Chaos} 混沌`
-    lines.push(`6 面骰　**${r.d6Roll}**（${note}）`)
-  }
-
-  if (r.burnout > 0 || r.isReality) {
-    const parts: string[] = []
-    if (r.isReality) parts.push(`失败计数 ${r.fcBefore}`)
-    parts.push(`资质补正 ${r.zeroPenalty}`)
-    lines.push(`燃尽　**${r.burnout}**（${parts.join(' + ')}）`)
-  }
-
-  if (r.burnout > 0) {
-    const converted = r.burnout - r.unconsumed
-    lines.push(`燃尽后　**${formatDice(r.burnedDice)}**（转换 ${converted} 个 3）`)
-  }
-
-  lines.push('')
-  lines.push(`成功数　**${r.successes}**`)
-
-  if (r.rawTriple) {
-    lines.push('本次混沌　**0**　★ 三重升华 ★')
-  } else if (r.chaos === 0) {
-    lines.push('本次混沌　**0**（燃尽后达成三重升华）')
+    if (d6Chaos > 0) chaosParts.push(`6 面骰 +${d6Chaos}`)
+    lines.push(`本次混沌　**+${r.chaos}**（${chaosParts.join(' + ')}）`)
   } else {
-    const detail: string[] = [`${countNonSuccesses(r.burnedDice)} 非 3`]
-    if (r.unconsumed > 0) detail.push(`${r.unconsumed} 未消耗燃尽`)
-    const d6Chaos = d6ChaosCount(r.d6Roll)
-    if (d6Chaos > 0) detail.push(`6 面骰 +${d6Chaos}`)
-    lines.push(`本次混沌　**+${r.chaos}**（${detail.join(' + ')}）`)
+    // ─── 6D4 (+ d6) 模式渲染 ───
+    lines.push(`原始骰　**${formatDice(r.rawDice)}**`)
+    if (r.d6Roll !== null) lines.push(renderD6Line(r.d6Roll))
+
+    if (r.burnout > 0 || r.isReality) {
+      const parts: string[] = []
+      if (r.isReality) parts.push(`失败计数 ${r.fcBefore}`)
+      parts.push(`资质补正 ${r.zeroPenalty}`)
+      lines.push(`燃尽　**${r.burnout}**（${parts.join(' + ')}）`)
+    }
+
+    if (r.burnout > 0) {
+      const converted = r.burnout - r.unconsumed
+      lines.push(`燃尽后　**${formatDice(r.burnedDice)}**（转换 ${converted} 个 3）`)
+    }
+
+    lines.push('')
+    lines.push(`成功数　**${r.successes}**`)
+
+    if (r.rawTriple) {
+      lines.push('本次混沌　**0**　★ 三重升华 ★')
+    } else if (r.chaos === 0) {
+      lines.push('本次混沌　**0**（燃尽后达成三重升华）')
+    } else {
+      const detail: string[] = [`${countNonSuccesses(r.burnedDice)} 非 3`]
+      if (r.unconsumed > 0) detail.push(`${r.unconsumed} 未消耗燃尽`)
+      const d6Chaos = d6ChaosCount(r.d6Roll)
+      if (d6Chaos > 0) detail.push(`6 面骰 +${d6Chaos}`)
+      lines.push(`本次混沌　**+${r.chaos}**（${detail.join(' + ')}）`)
+    }
   }
 
   if (r.unleash) {
@@ -431,7 +575,10 @@ function renderRollResult(r: RollResult): string {
     lines.push(`混沌池　**${r.chaosPool}**（无变动）`)
   }
 
-  if (r.isReality && r.isMember) {
+  if (r.d10Failure) {
+    lines.push('')
+    lines.push('> 判定：**失败**（d10=3 强制失败）')
+  } else if (r.isReality && r.isMember) {
     lines.push('')
     if (r.failureIncremented) {
       lines.push(`> 判定：**失败**，失败计数 +1（当前 ${r.failureCount}）`)
@@ -446,7 +593,28 @@ function renderRollResult(r: RollResult): string {
   return lines.join('\n')
 }
 
+function renderD6Line(d6: number): string {
+  const add = d6ThreeCount(d6)
+  if (add === 2) return `6 面骰　**${d6}**（算 2 个 3）`
+  if (add === 1) return `6 面骰　**${d6}**（算 1 个 3）`
+  return `6 面骰　**${d6}**（+${d6ChaosCount(d6)} 混沌）`
+}
+
 function renderRollButtons(r: RollResult): QQButton[][] {
+  // d10 模式没有 d4 池，"增/减成功"按钮不适用，只留撤回 + 再投
+  if (r.d10Roll !== null) {
+    return [
+      [
+        { label: '撤回', data: '/撤回骰点', type: 'input', enter: true },
+        {
+          label: `再投 ${r.aptName}`,
+          data: `/${r.trigger} ${r.aptName}`,
+          type: 'input',
+          enter: true,
+        },
+      ],
+    ]
+  }
   return [
     [
       { label: '成功+1', data: '/增加成功 1', primary: true, type: 'input', enter: true },
