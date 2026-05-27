@@ -33,7 +33,7 @@ const TODO = (phase: 'P2' | 'P3' | 'P4', name: string) =>
  */
 const OUR_COMMAND_NAMES: ReadonlySet<string> = new Set([
   '帮助', '骰点帮助', '菜单',
-  '现实修改', '异常能力',
+  '现实修改', '异常能力', '三重升华测试',
   '增加成功', '减少成功', '撤回骰点',
   '录入资质',
   '任务属性', '混沌增加', '混沌减少', '失败增加', '失败减少', '散逸增加', '散逸减少',
@@ -90,6 +90,9 @@ export function registerCommands(ctx: Context, deps: CommandDeps): void {
       { label: '查看任务', data: '/查看任务', type: 'input', enter: true },
       { label: '查询角色', data: '/查询角色', type: 'input', enter: true },
       { label: '查询状态', data: '/查询状态', type: 'input', enter: true },
+    ],
+    [
+      { label: '三重升华测试', data: '/三重升华测试', type: 'input', enter: true },
     ],
   ]
   ctx
