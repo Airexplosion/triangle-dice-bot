@@ -33,7 +33,7 @@ export function registerRollCommands(ctx: Context, deps: RollDeps): void {
     const md = [
       `# 现实修改 · 专注`,
       '',
-      `![三重升华](${TRIPLE_SUBLIMATION_IMG})`,
+      `![三重升华 #720px #720px](${TRIPLE_SUBLIMATION_IMG})`,
       '',
       `资质值　**5**`,
       '',
@@ -318,7 +318,7 @@ function renderRollResult(r: RollResult): string {
   // 三重升华专属横幅图：标题正下方
   if (r.rawTriple) {
     lines.push('')
-    lines.push(`![三重升华](${TRIPLE_SUBLIMATION_IMG})`)
+    lines.push(`![三重升华 #720px #720px](${TRIPLE_SUBLIMATION_IMG})`)
   }
   if (!r.isMember) {
     lines.push('')
