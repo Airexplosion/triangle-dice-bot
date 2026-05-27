@@ -164,10 +164,6 @@ export async function sendQQMarkdown(
   }
   if (session.messageId) payload.msg_id = session.messageId
 
-  // DEBUG: 打印实际发给 QQ 的 payload（特别看 keyboard.action.type / enter）
-  const ctxAppForLog = (session as unknown as { app?: { logger?: (n: string) => { info: (m: string, ...a: unknown[]) => void } } }).app
-  ctxAppForLog?.logger?.('triangle:qq-md').info('payload → QQ: %j', payload)
-
   try {
     if (session.isDirect) {
       await bot.internal.sendPrivateMessage(channelId, payload)
