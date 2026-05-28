@@ -410,6 +410,10 @@ async function handleCheck(
     d10Roll: null,
     d8Roll: null,
     d8Delta: 0,
+    burnout: 0,
+    lockedTriple: !!r.triple,
+    lockedUnleash: false,
+    consumedReprimands: 0,
   })
 
   // web 同步：QA 消耗（扣费 1 + d20=7 清零）+ 混沌
@@ -721,6 +725,10 @@ async function handle(
       d10Roll,
       d8Roll,
       d8Delta,
+      burnout,
+      lockedTriple: rawTriple,
+      lockedUnleash: unleash,
+      consumedReprimands: 0,
     }
     deps.pending.set(roomId, playerId, pendingRoll)
 
@@ -1027,19 +1035,27 @@ export function d8DeltaButtonRows(
 }
 
 function renderRollButtons(r: RollResult): QQButton[][] {
-  // d10 模式没有 d4 池，"增/减成功"按钮不适用，只留撤回 + 再投
+  // d10 模式没有 d4 池，"增/减成功"按钮不适用；给 d10/d6 调整入口 + 撤回 + 再投
   if (r.d10Roll !== null) {
-    return [
-      [
-        { label: '撤回', data: '/撤回骰点', type: 'input', enter: true },
-        {
-          label: `再投 ${r.aptName}`,
-          data: `/${r.trigger} ${r.aptName}`,
-          type: 'input',
-          enter: true,
-        },
-      ],
-    ]
+    const rows: QQButton[][] = []
+    const adj: QQButton[] = []
+    if (r.d10Roll !== 3) {
+      adj.push({ label: '调 d10', data: '/d10调', type: 'input', enter: true })
+    }
+    if (r.d6Roll !== null) {
+      adj.push({ label: '调 d6', data: '/d6调', type: 'input', enter: true })
+    }
+    if (adj.length) rows.push(adj)
+    rows.push([
+      { label: '撤回', data: '/撤回骰点', type: 'input', enter: true },
+      {
+        label: `再投 ${r.aptName}`,
+        data: `/${r.trigger} ${r.aptName}`,
+        type: 'input',
+        enter: true,
+      },
+    ])
+    return rows
   }
   const rows: QQButton[][] = []
   // 第一行：成功修改
@@ -1050,6 +1066,10 @@ function renderRollButtons(r: RollResult): QQButton[][] {
   // d8 = 3 / 6 时，给精确增量按钮（每行最多 3 个；d8=6 自动拆两行）
   if (r.d8Roll !== null && d8ThreeCount(r.d8Roll) > 0) {
     rows.push(...d8DeltaButtonRows(r.d8Roll, r.d8Delta))
+  }
+  // d6（异常能力 + U2）调整入口
+  if (r.d6Roll !== null) {
+    rows.push([{ label: '调 d6', data: '/d6调', type: 'input', enter: true }])
   }
   rows.push([
     { label: '撤回', data: '/撤回骰点', type: 'input', enter: true },

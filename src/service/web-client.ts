@@ -103,6 +103,24 @@ export class WebClient {
     })
   }
 
+  /**
+   * 花费 / 退还申诫（reprimands）。amount 正数=花费，负数=退还。
+   * 4xx（如申诫不足）→ \{ success: false, error \}；5xx / 网络 → null。
+   */
+  spendReprimands(
+    qqOpenid: string,
+    qqGroupOpenid: string | null,
+    amount: number,
+    reason?: string,
+  ): Promise<{ success: boolean; balance?: number; error?: string } | null> {
+    return this.postJson('/api/bot/spend-reprimands', {
+      qqOpenid,
+      qqGroupOpenid,
+      amount,
+      reason,
+    })
+  }
+
   setAptitudes(
     qqOpenid: string,
     qqGroupOpenid: string | null,

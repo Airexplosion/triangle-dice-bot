@@ -78,4 +78,15 @@ export interface PendingRoll {
    * 该值直接参与三重升华判定与总成功数计算。
    */
   d8Delta: number
+  /** 本次骰点的原始燃尽量（失败计数 + 资质补正），供 d10 调整后重算用。 */
+  burnout: number
+  /**
+   * 三重升华 / UNL3ASH 在骰点时锁定的结果。
+   * d6/d10 的 QA/申诫 ±1 调整只重算成功数与混沌，这两项保持骰点时的值
+   * （开发者 RAI：UNL3ASH 仅在调整前判定；三重升华同理不因调整新生）。
+   */
+  lockedTriple: boolean
+  lockedUnleash: boolean
+  /** 累计花费的申诫（撤回时退还）。 */
+  consumedReprimands: number
 }

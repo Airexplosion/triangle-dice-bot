@@ -2,9 +2,14 @@ import type { Context } from 'koishi'
 import { calculateChaos, isTripleSublimation } from '../game/chaos'
 import {
   clampD8Delta,
+  countNonSuccesses,
   countSuccesses,
+  d6ChaosCount,
   d6ThreeCount,
   d8ThreeCount,
+  d10ChaosCount,
+  d10ThreeCount,
+  isD10Failure,
 } from '../game/dice'
 import { rawRoomIdOf, roomIdOf } from '../room'
 import type { PendingRollStore } from '../service/pending'
@@ -77,6 +82,276 @@ export function registerPostRollCommands(ctx: Context, deps: PostRollDeps): void
   ctx
     .command('d8 <delta:string>', '骰后：设置 d8 的 3 数增量（如 /d8 1、/d8 -2）')
     .action(async ({ session }, delta) => handleD8Delta(deps, session, delta))
+
+  // ─── d10 调整（±1，花 1 QA 或 3 申诫；向导）───
+  ctx
+    .command('d10调 [dir:string] [cost:string]', '骰后：花 1 QA 或 3 申诫调整 d10 ±1')
+    .action(async ({ session }, dir, cost) =>
+      handleDieAdjust(deps, session, 'd10', dir, cost),
+    )
+  // ─── d6 调整（设任意点数，花 1 QA 或 3 申诫；向导）───
+  ctx
+    .command('d6调 [val:string] [cost:string]', '骰后：花 1 QA 或 3 申诫把 d6 设成任意点数')
+    .action(async ({ session }, val, cost) =>
+      handleDieAdjust(deps, session, 'd6', val, cost),
+    )
+}
+
+/** 异常能力（d6/d10）骰点调整后的成功数 + 混沌重算（三重升华/UNL3ASH 冻结 roll-time）。 */
+function recomputeAnomaly(
+  pending: import('../types').PendingRoll,
+): { success: number; chaos: number } {
+  const d6 = pending.d6Roll
+  if (pending.d10Roll !== null) {
+    const d10 = pending.d10Roll
+    const d10Threes = d10ThreeCount(d10)
+    const consumed = Math.min(pending.burnout, d10Threes)
+    const after = d10Threes - consumed
+    const success = isD10Failure(d10) ? 0 : after + d6ThreeCount(d6)
+    const chaos = d10ChaosCount(d10) + pending.burnout + d6ChaosCount(d6)
+    return { success, chaos }
+  }
+  // d6 模式（6D4 + d6）：三重升华冻结，故 chaos 不因新三连归零
+  const success = countSuccesses(pending.currentDice) + d6ThreeCount(d6)
+  const chaos = pending.lockedTriple
+    ? 0
+    : countNonSuccesses(pending.currentDice) + pending.unconsumedBurnout + d6ChaosCount(d6)
+  return { success, chaos }
+}
+
+const COST_LABEL: Record<string, string> = { qa: '1 资质 QA', 申诫: '3 申诫' }
+
+/**
+ * d6/d10 调整向导 + 执行。
+ *   d10：dir ∈ {+1,-1}，±1（[1,10] 截断，10/1 不环绕；d10=3 锁定不可调）
+ *   d6 ：val ∈ {1..6}，设任意点数
+ *   cost ∈ {qa, 申诫}；qa 扣该次骰点资质 1 点，申诫扣 3（网页插 -3 记录）
+ * 仅重算成功数 + 混沌；三重升华 / UNL3ASH 冻结。异常能力无失败计数。
+ */
+async function handleDieAdjust(
+  deps: PostRollDeps,
+  session: import('koishi').Session | undefined,
+  kind: 'd10' | 'd6',
+  arg1: string | undefined,
+  arg2: string | undefined,
+): Promise<void> {
+  if (!session) return
+  if (session.isDirect) return reply(session, deps, '> 私聊不支持骰点命令。')
+  const roomId = roomIdOf(session)
+  const rawRoomId = rawRoomIdOf(session)
+  if (!roomId || !rawRoomId) return reply(session, deps, '> 无法定位房间。')
+  const playerId = session.userId ?? 'unknown'
+
+  const pending = deps.pending.get(roomId, playerId)
+  if (!pending) {
+    return reply(session, deps, '> 没有待修改的骰点结果（已过期或未骰点）。')
+  }
+  if (kind === 'd10' && pending.d10Roll === null) {
+    return reply(session, deps, '> 本次骰点未使用 d10。')
+  }
+  if (kind === 'd6' && pending.d6Roll === null) {
+    return reply(session, deps, '> 本次骰点未使用 d6。')
+  }
+  if (kind === 'd10' && pending.d10Roll === 3) {
+    return reply(session, deps, '> d10 = 3 为强制失败，规则上不可调整。')
+  }
+
+  // ── 解析 target ──
+  let target: number | null = null
+  if (kind === 'd10') {
+    const cur = pending.d10Roll!
+    if (arg1 === '1' || arg1 === '+1') target = Math.min(10, cur + 1)
+    else if (arg1 === '-1') target = Math.max(1, cur - 1)
+  } else {
+    const v = Number.parseInt(arg1 ?? '', 10)
+    if (v >= 1 && v <= 6) target = v
+  }
+
+  // ── 向导步骤 1：选方向 / 点数 ──
+  if (target === null) {
+    if (kind === 'd10') {
+      await reply(
+        session,
+        deps,
+        [
+          `# 调整 d10（当前 **${pending.d10Roll}**）`,
+          '',
+          '每次 ±1（10 与 1 不相连），花 1 资质 QA 或 3 申诫：',
+        ].join('\n'),
+        [
+          [
+            { label: '+1', data: '/d10调 1', primary: true, type: 'input', enter: true },
+            { label: '−1', data: '/d10调 -1', type: 'input', enter: true },
+          ],
+        ],
+      )
+    } else {
+      const grid: QQButton[][] = []
+      for (let i = 1; i <= 6; i += 3) {
+        grid.push(
+          [i, i + 1, i + 2].map((v) => ({
+            label: String(v),
+            data: `/d6调 ${v}`,
+            primary: v === pending.d6Roll,
+            type: 'input' as const,
+            enter: true,
+          })),
+        )
+      }
+      await reply(
+        session,
+        deps,
+        [
+          `# 设定 d6（当前 **${pending.d6Roll}**）`,
+          '',
+          '选择目标点数（花 1 资质 QA 或 3 申诫）：',
+          '> 3 → 1 个 3；6 → 2 个 3；其余 → +1 混沌',
+        ].join('\n'),
+        grid,
+      )
+    }
+    return
+  }
+
+  // ── 向导步骤 2：选支付方式 ──
+  const cost = arg2
+  if (cost !== 'qa' && cost !== '申诫') {
+    const base = kind === 'd10' ? `/d10调 ${arg1}` : `/d6调 ${target}`
+    await reply(
+      session,
+      deps,
+      [
+        `# ${kind === 'd10' ? `d10 → ${target}` : `d6 → ${target}`}`,
+        '',
+        `加值资质：**${pending.aptitudeName}**`,
+        '选择支付方式：',
+      ].join('\n'),
+      [
+        [
+          { label: '用 1 资质 QA', data: `${base} qa`, primary: true, type: 'input', enter: true },
+          { label: '用 3 申诫', data: `${base} 申诫`, type: 'input', enter: true },
+        ],
+      ],
+    )
+    return
+  }
+
+  // ── 申诫支付：先 await 扣减（校验余额）──
+  if (cost === '申诫') {
+    if (!deps.web) {
+      return reply(session, deps, '> 未配置角色卡服务，无法用申诫支付。')
+    }
+    const groupId = rawRoomIdOf(session) ?? null
+    const r = await deps.web.spendReprimands(playerId, groupId, 3, `${kind} 调整`)
+    if (!r) return reply(session, deps, '> 暂时无法连接角色卡，申诫扣减失败。')
+    if (!r.success) return reply(session, deps, `> ${r.error ?? '申诫不足'}`)
+  }
+
+  let outcome: DieAdjustOutcome | string | null = null
+
+  await deps.rooms.update(roomId, session.platform, rawRoomId, (room) => {
+    const player = getOrCreatePlayer(room, playerId)
+    // QA 支付：扣该次骰点资质 1 点（开发者点 4：必须相关资质）
+    if (cost === 'qa') {
+      const apt = pending.aptitudeName
+      const curQa = player.aptitudes[apt] ?? 0
+      if (curQa < 1) {
+        outcome = `> 资质 **${apt}** QA 不足（当前 ${curQa}，需要 1）。`
+        return
+      }
+      player.aptitudes[apt] = curQa - 1
+      pending.consumedAptitudes[apt] = (pending.consumedAptitudes[apt] ?? 0) + 1
+    } else {
+      pending.consumedReprimands += 3
+    }
+
+    const oldChaos = pending.chaosApplied
+    const oldVal = kind === 'd10' ? pending.d10Roll! : pending.d6Roll!
+    if (kind === 'd10') pending.d10Roll = target
+    else pending.d6Roll = target
+
+    const { success, chaos } = recomputeAnomaly(pending)
+    const isMember = isMissionMember(room, playerId)
+    const chaosDiff = isMember ? chaos - oldChaos : 0
+    if (isMember) room.chaosPool = Math.max(0, room.chaosPool + chaosDiff)
+    pending.chaosApplied = isMember ? chaos : 0
+
+    outcome = {
+      kind,
+      oldVal,
+      newVal: target!,
+      cost: cost as 'qa' | '申诫',
+      success,
+      chaos,
+      chaosDiff,
+      chaosPool: room.chaosPool,
+      isMember,
+      aptName: pending.aptitudeName,
+      aptAfter: player.aptitudes[pending.aptitudeName] ?? 0,
+    }
+  })
+
+  if (typeof outcome === 'string') {
+    // QA 不足：若已扣申诫需回滚（这里 cost 必为 qa，故无需回滚申诫）
+    return reply(session, deps, outcome)
+  }
+  if (!outcome) return
+  const o = outcome as DieAdjustOutcome
+
+  // web 同步：QA 消耗 + 混沌差值
+  if (o.cost === 'qa') fireConsumeAptitude(deps.web, session, o.aptName, 1)
+  if (o.isMember && o.chaosDiff !== 0) {
+    fireSyncChaos(deps.web, session, o.chaosDiff, `${o.kind} 调整`)
+  }
+
+  // 调整后保留入口按钮，便于继续调整 d10 / 撤回
+  const btns: QQButton[][] = []
+  if (o.kind === 'd10' && o.newVal !== 3) {
+    btns.push([{ label: '继续调 d10', data: '/d10调', type: 'input', enter: true }])
+  }
+  if (pending.d6Roll !== null && o.kind === 'd6') {
+    btns.push([{ label: '继续调 d6', data: '/d6调', type: 'input', enter: true }])
+  }
+  btns.push([{ label: '撤回', data: '/撤回骰点', type: 'input', enter: true }])
+
+  await reply(session, deps, renderDieAdjust(o), btns)
+}
+
+interface DieAdjustOutcome {
+  kind: 'd10' | 'd6'
+  oldVal: number
+  newVal: number
+  cost: 'qa' | '申诫'
+  success: number
+  chaos: number
+  chaosDiff: number
+  chaosPool: number
+  isMember: boolean
+  aptName: string
+  aptAfter: number
+}
+
+function renderDieAdjust(o: DieAdjustOutcome): string {
+  const lines: string[] = []
+  const die = o.kind === 'd10' ? '10 面骰' : '6 面骰'
+  lines.push(`# 调整 ${die}：${o.oldVal} → **${o.newVal}**`)
+  lines.push('')
+  lines.push(`支付　**${COST_LABEL[o.cost]}**`)
+  if (o.cost === 'qa') {
+    lines.push(`资质 **${o.aptName}** 当前 **${o.aptAfter}**`)
+  }
+  lines.push('')
+  lines.push(`成功数　**${o.success}**`)
+  if (o.isMember) {
+    const sign = o.chaosDiff >= 0 ? '+' : ''
+    lines.push(`本次混沌　**${o.chaos}**（差值 ${sign}${o.chaosDiff}）`)
+    lines.push(`混沌池　**${o.chaosPool}**`)
+  } else {
+    lines.push('> 观察模式：本次调整不影响混沌池')
+  }
+  lines.push('')
+  lines.push('> 三重升华 / UNL3ASH 按掷骰时结果锁定，调整不影响')
+  return lines.join('\n')
 }
 
 /**
@@ -285,6 +560,7 @@ async function handleUndo(
     aptBack: {} as Record<string, number>,
     aptNewValues: {} as Record<string, number>,
   }
+  const reprimandsBack = pending.consumedReprimands
 
   await deps.rooms.update(roomId, session.platform, rawRoomId, (room) => {
     const player = getOrCreatePlayer(room, playerId)
@@ -322,6 +598,11 @@ async function handleUndo(
   if (Object.keys(summary.aptNewValues).length > 0) {
     fireSetAptitudes(deps.web, session, summary.aptNewValues)
   }
+  // 退还申诫（spend 负数 = 退还），fire-and-forget
+  if (reprimandsBack > 0 && deps.web) {
+    const groupId = rawRoomIdOf(session) ?? null
+    void deps.web.spendReprimands(playerId, groupId, -reprimandsBack, '撤回骰点退还')
+  }
 
   // reply
   const lines: string[] = ['# 骰点已撤回', '']
@@ -331,6 +612,9 @@ async function handleUndo(
   }
   for (const [name, n] of Object.entries(summary.aptBack)) {
     lines.push(`资质 **${name}**　退还 **+${n}**`)
+  }
+  if (reprimandsBack > 0) {
+    lines.push(`申诫　退还 **+${reprimandsBack}**`)
   }
   await reply(session, deps, lines.join('\n'))
 }
