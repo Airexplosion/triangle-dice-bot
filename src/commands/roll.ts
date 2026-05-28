@@ -984,27 +984,26 @@ function d8DeltaLabel(v: number): string {
 }
 
 /**
- * d8 增量选择按钮，按每行最多 3 个切成多行（d8=6 的 5 个选项 → 2 行，避免单行过挤）。
+ * d8 增量选择按钮布局：
+ *   d8=3（max 1）：[+1个3] [忽略] [−1个3]
+ *   d8=6（max 2）：[+1个3] [忽略] [−1个3] / [+2个3] [−2个3]
  * currentDelta 高亮当前选中项。
  */
 export function d8DeltaButtonRows(
   d8: number | null,
   currentDelta: number,
 ): QQButton[][] {
-  const opts = d8DeltaOptions(d8)
-  if (opts.length === 0) return []
-  const rows: QQButton[][] = []
-  for (let i = 0; i < opts.length; i += 3) {
-    rows.push(
-      opts.slice(i, i + 3).map((v) => ({
-        label: d8DeltaLabel(v),
-        data: `/d8 ${v}`,
-        primary: currentDelta === v,
-        type: 'input' as const,
-        enter: true,
-      })),
-    )
-  }
+  const max = d8ThreeCount(d8)
+  if (max === 0) return []
+  const mk = (v: number): QQButton => ({
+    label: d8DeltaLabel(v),
+    data: `/d8 ${v}`,
+    primary: currentDelta === v,
+    type: 'input',
+    enter: true,
+  })
+  const rows: QQButton[][] = [[mk(1), mk(0), mk(-1)]]
+  if (max >= 2) rows.push([mk(2), mk(-2)])
   return rows
 }
 
