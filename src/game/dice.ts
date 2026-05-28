@@ -94,6 +94,17 @@ export function rollD10(rng: Rng = defaultRng): number {
   return randInt(1, 10, rng)
 }
 
+// ───────── d20（技能检定，T3 解锁）─────────
+// 拿 1 颗 d20 代替 6D4：花 1 点 QA（任一资质），选一项相关资质把它当前 QA 加到 d20 上。
+//   最终 = d20 + 加值资质 QA（扣费后），> 10 → 成功
+//   d20 = 3 → 自动成功 + 三重升华
+//   d20 = 7 → 自动失败 + 加值资质所有剩余 QA 清零
+//   失败 → 创造 = d20 面值 的混沌；不动失败计数
+
+export function rollD20(rng: Rng = defaultRng): number {
+  return randInt(1, 20, rng)
+}
+
 /** d10 等效的"3 数量"贡献。d10=3 → 0（失败），其余 = 面值。 */
 export function d10ThreeCount(d10: number | null): number {
   if (d10 === null) return 0

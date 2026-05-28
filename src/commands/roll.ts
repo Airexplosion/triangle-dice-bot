@@ -15,13 +15,20 @@ import {
   rollD6,
   rollD8,
   rollD10,
+  rollD20,
 } from '../game/dice'
 import { rawRoomIdOf, roomIdOf } from '../room'
 import type { PendingRoll } from '../types'
 import { sendQQMarkdown, type QQButton } from '../util/qq-markdown'
 import { getOrCreatePlayer, type RoomStore } from '../service/store'
 import type { PendingRollStore } from '../service/pending'
-import { fireDiceRoll, fireSyncChaos, fireSyncFailure, syncFromWeb } from '../service/sync'
+import {
+  fireConsumeAptitude,
+  fireDiceRoll,
+  fireSyncChaos,
+  fireSyncFailure,
+  syncFromWeb,
+} from '../service/sync'
 import type { WebClient } from '../service/web-client'
 import { isMissionMember } from '../util/mission'
 
@@ -37,17 +44,23 @@ async function getDiceUnlocks(
   ctx: Context,
   deps: RollDeps,
   session: import('koishi').Session,
-): Promise<{ u2: boolean; n1: boolean; g3: boolean }> {
-  if (!deps.web || !session.userId) return { u2: false, n1: false, g3: false }
+): Promise<{ u2: boolean; n1: boolean; g3: boolean; t3: boolean }> {
+  const none = { u2: false, n1: false, g3: false, t3: false }
+  if (!deps.web || !session.userId) return none
   try {
     const groupId = session.isDirect ? undefined : rawRoomIdOf(session) ?? undefined
     const r = await deps.web.getCharacterHighWalls(session.userId, groupId)
-    if (!r?.success || !r.highWalls) return { u2: false, n1: false, g3: false }
+    if (!r?.success || !r.highWalls) return none
     const codes = new Set(r.highWalls.map((w) => fileCode(w.filename)))
-    return { u2: codes.has('U2'), n1: codes.has('N1'), g3: codes.has('G3') }
+    return {
+      u2: codes.has('U2'),
+      n1: codes.has('N1'),
+      g3: codes.has('G3'),
+      t3: codes.has('T3'),
+    }
   } catch (e) {
     ctx.logger('triangle').warn('getDiceUnlocks failed: %s', (e as Error).message ?? e)
-    return { u2: false, n1: false, g3: false }
+    return none
   }
 }
 
@@ -174,6 +187,246 @@ export function registerRollCommands(ctx: Context, deps: RollDeps): void {
         useD8: false,
       })
     })
+
+  // ─── 技能检定（T3 解锁，d20）───
+  ctx
+    .command('检定 <addApt:string> <costApt:string>', 'T3 技能：d20 检定（/检定 加值资质 扣费资质）')
+    .action(async ({ session }, addApt, costApt) =>
+      handleCheck(ctx, deps, session, addApt, costApt),
+    )
+}
+
+/**
+ * 技能检定（T3 解锁）：
+ *   /检定 <加值资质> <扣费资质>
+ *   - 扣费资质 花 1 点 QA（需 ≥ 1）
+ *   - d20 + 加值资质（扣费后）当前 QA = 最终值；> 10 → 成功
+ *   - d20 = 3 → 自动成功 + 三重升华（混沌 0）
+ *   - d20 = 7 → 自动失败 + 加值资质所有剩余 QA 清零
+ *   - 失败 → 混沌 += d20 面值；不动失败计数
+ *   - d20 不可被增/减成功调整；无 6D4 / 燃尽
+ */
+async function handleCheck(
+  ctx: Context,
+  deps: RollDeps,
+  session: import('koishi').Session | undefined,
+  addApt: string | undefined,
+  costApt: string | undefined,
+): Promise<void> {
+  if (!session) return
+  if (session.isDirect) {
+    await reply(session, deps, '> 私聊不支持检定。')
+    return
+  }
+
+  const unlocks = await getDiceUnlocks(ctx, deps, session)
+  if (!unlocks.t3) {
+    await reply(
+      session,
+      deps,
+      '> 你的角色尚未解锁 **T3 · 检定**，无法使用此技能。',
+    )
+    return
+  }
+
+  if (!addApt || !APTITUDE_SET.has(addApt)) {
+    await reply(
+      session,
+      deps,
+      [
+        '**用法**　检定 <加值资质> <扣费资质>',
+        '',
+        '加值资质：把它当前 QA 加到 d20 上',
+        '扣费资质：从它扣 1 点 QA 作为代价',
+        '',
+        '九种资质：' + APTITUDE_NAMES.join(' '),
+        '例：检定 专注 气场',
+      ].join('\n'),
+    )
+    return
+  }
+  if (!costApt || !APTITUDE_SET.has(costApt)) {
+    await reply(
+      session,
+      deps,
+      `> 请指定**扣费资质**（从中扣 1 点 QA）。\n> 例：检定 ${addApt} 气场`,
+    )
+    return
+  }
+
+  const roomId = roomIdOf(session)
+  const rawRoomId = rawRoomIdOf(session)
+  if (!roomId || !rawRoomId) {
+    await reply(session, deps, '> 无法定位房间。')
+    return
+  }
+  const playerId = session.userId ?? 'unknown'
+
+  // 骰前从 web 同步混沌池 + 玩家资质
+  await syncFromWeb(deps.web, deps.rooms, session)
+  let webAptitudes: Record<string, number> | null = null
+  if (deps.web && playerId) {
+    const apt = await deps.web.getAptitudes(playerId, rawRoomId)
+    if (apt?.success && apt.attrs) webAptitudes = mapWebAttrsToAptitudes(apt.attrs)
+  }
+
+  let result: CheckResult | null = null
+
+  await deps.rooms.update(roomId, session.platform, rawRoomId, (room) => {
+    const player = getOrCreatePlayer(room, playerId)
+    if (webAptitudes) {
+      for (const [k, v] of Object.entries(webAptitudes)) {
+        if (typeof v === 'number') player.aptitudes[k] = v
+      }
+    }
+
+    const costBefore = player.aptitudes[costApt] ?? 0
+    if (costBefore < 1) {
+      result = { error: `扣费资质 **${costApt}** 的 QA 不足（当前 ${costBefore}，需要 ≥ 1）。` }
+      return
+    }
+
+    // 1) 扣 1 点 QA 作为代价
+    player.aptitudes[costApt] = costBefore - 1
+
+    // 2) 读加值资质（扣费后）当前 QA
+    const addQa = player.aptitudes[addApt] ?? 0
+
+    // 3) 掷 d20
+    const d20 = rollD20()
+
+    const isMember = isMissionMember(room, playerId)
+    let success: boolean
+    let triple = false
+    let chaos = 0
+    let loseAllQa = 0 // d20=7 时清零的加值资质数量
+    let finalValue: number | null = null
+
+    if (d20 === 3) {
+      success = true
+      triple = true
+      chaos = 0
+    } else if (d20 === 7) {
+      success = false
+      // 加值资质所有剩余 QA 清零
+      loseAllQa = player.aptitudes[addApt] ?? 0
+      player.aptitudes[addApt] = 0
+      chaos = 7
+    } else {
+      finalValue = d20 + addQa
+      success = finalValue > 10
+      chaos = success ? 0 : d20
+    }
+
+    // 混沌仅对任务成员入池 + 同步
+    const chaosApplied = isMember ? chaos : 0
+    if (isMember) room.chaosPool += chaosApplied
+
+    result = {
+      addApt,
+      costApt,
+      d20,
+      addQa,
+      finalValue,
+      success,
+      triple,
+      chaos,
+      chaosApplied,
+      loseAllQa,
+      isMember,
+      costAfter: player.aptitudes[costApt] ?? 0,
+      addAfter: player.aptitudes[addApt] ?? 0,
+      chaosPool: room.chaosPool,
+    }
+  })
+
+  if (!result) return
+  const r = result as CheckResult
+  if (r.error) {
+    await reply(session, deps, `> ${r.error}`)
+    return
+  }
+
+  // web 同步：QA 消耗（扣费 1 + d20=7 清零）+ 混沌
+  fireConsumeAptitude(deps.web, session, r.costApt!, 1)
+  if (r.loseAllQa! > 0) {
+    fireConsumeAptitude(deps.web, session, r.addApt!, r.loseAllQa!)
+  }
+  if (r.isMember && r.chaosApplied! > 0) {
+    fireSyncChaos(deps.web, session, r.chaosApplied!, `检定 ${r.addApt}`)
+  }
+  fireDiceRoll(deps.web, session, `检定 ${r.addApt}`, `d20=${r.d20}`, [r.d20!], 'normal')
+
+  await reply(session, deps, renderCheck(r), [
+    [
+      {
+        label: `再检定 ${r.addApt}`,
+        data: `/检定 ${r.addApt} ${r.costApt}`,
+        type: 'input',
+        enter: true,
+      },
+    ],
+  ])
+}
+
+interface CheckResult {
+  error?: string
+  addApt?: string
+  costApt?: string
+  d20?: number
+  addQa?: number
+  finalValue?: number | null
+  success?: boolean
+  triple?: boolean
+  chaos?: number
+  chaosApplied?: number
+  loseAllQa?: number
+  isMember?: boolean
+  costAfter?: number
+  addAfter?: number
+  chaosPool?: number
+}
+
+function renderCheck(r: CheckResult): string {
+  const lines: string[] = []
+  lines.push(`# 检定 · ${r.addApt}`)
+  if (r.triple) {
+    lines.push('')
+    lines.push(`![三重升华 #500px #126px](${TRIPLE_SUBLIMATION_IMG})`)
+  }
+  if (!r.isMember) {
+    lines.push('')
+    lines.push('> 观察模式：本次检定不影响混沌池')
+  }
+  lines.push('')
+  lines.push(`二十面骰　**${r.d20}**`)
+  if (r.d20 === 3) {
+    lines.push('> 掷出 3 → 自动成功并达成三重升华')
+  } else if (r.d20 === 7) {
+    lines.push(`> 掷出 7 → 自动失败，**${r.addApt}** 剩余 QA 全部失去（−${r.loseAllQa}）`)
+  } else {
+    lines.push(`加值资质　**${r.addApt}** 当前 QA **${r.addQa}**`)
+    lines.push(`最终值　**${r.d20} + ${r.addQa} = ${r.finalValue}**（> 10 成功）`)
+  }
+  lines.push('')
+  lines.push(`扣费资质　**${r.costApt}** −1 → 当前 **${r.costAfter}**`)
+  lines.push('')
+  if (r.success) {
+    lines.push(`判定　**成功**${r.triple ? '　★ 三重升华 ★' : ''}`)
+  } else {
+    lines.push(`判定　**失败**`)
+  }
+  if (r.chaos! > 0) {
+    if (r.isMember) {
+      lines.push(`本次混沌　**+${r.chaos}**（d20 面值）`)
+      lines.push(`混沌池　**${r.chaosPool}**`)
+    } else {
+      lines.push(`本次混沌　**+${r.chaos}**（观察模式，不入池）`)
+    }
+  } else if (r.isMember) {
+    lines.push(`混沌池　**${r.chaosPool}**（无变动）`)
+  }
+  return lines.join('\n')
 }
 
 /**

@@ -33,7 +33,7 @@ const TODO = (phase: 'P2' | 'P3' | 'P4', name: string) =>
  */
 const OUR_COMMAND_NAMES: ReadonlySet<string> = new Set([
   '帮助', '骰点帮助', '菜单',
-  '现实修改', '异常能力',
+  '现实修改', '异常能力', '检定',
   '增加成功', '减少成功', '撤回骰点',
   'd8',
   '录入资质',
