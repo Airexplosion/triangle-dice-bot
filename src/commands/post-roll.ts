@@ -176,6 +176,7 @@ async function handleD8Delta(
       oldDelta,
       newDelta,
       d8Roll: pending.d8Roll!,
+      dice: [...dice],
       triple,
       isMember,
       oldSuccesses,
@@ -223,6 +224,8 @@ interface D8DeltaOutcome {
   oldDelta: number
   newDelta: number
   d8Roll: number
+  /** 当前 d4 工作骰（燃尽 / 增减成功 后） */
+  dice: number[]
   triple: boolean
   isMember: boolean
   oldSuccesses: number
@@ -244,9 +247,10 @@ function renderD8DeltaChange(o: D8DeltaOutcome): string {
     lines.push(`![三重升华 #500px #126px](${TRIPLE_SUBLIMATION_IMG})`)
   }
   lines.push('')
-  lines.push(`d8 摇出　**${o.d8Roll}**（最多 ${d8ThreeCount(o.d8Roll)} 个 3 可调）`)
+  // 最终骰：六颗 d4 + d8 用括号，如 3 · 2 · 1 · 2 · 3 · 2（3）
+  lines.push(`最终骰　**${o.dice.join(' · ')}（${o.d8Roll}）**`)
   lines.push('')
-  lines.push(`成功数　**${o.oldSuccesses} → ${o.newSuccesses}**`)
+  lines.push(`最终成功数　**${o.newSuccesses}**${o.triple ? '　★ 三重升华 ★' : ''}（${o.oldSuccesses} → ${o.newSuccesses}）`)
   if (o.isMember) {
     const sign = o.chaosDiff >= 0 ? '+' : ''
     if (o.triple) {
