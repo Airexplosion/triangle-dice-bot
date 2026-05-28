@@ -334,7 +334,7 @@ async function handleCheck(
       [
         '# 检定 · 第 1 步',
         '',
-        '请选择**扣费资质**（从中扣 1 点 QA 作为代价）：',
+        '请选择**扣费资质**（从中扣 1 点资质作为代价）：',
       ].join('\n'),
       buildCheckGrid('/检定 '),
     )
@@ -348,9 +348,9 @@ async function handleCheck(
       [
         '# 检定 · 第 2 步',
         '',
-        `扣费资质：**${costApt}**（将扣 1 点 QA）`,
+        `扣费资质：**${costApt}**（将扣 1 点资质）`,
         '',
-        '请选择**加值资质**（把它当前 QA 加到 d20 上）：',
+        '请选择**加值资质**（把它当前资质值加到 d20 上）：',
       ].join('\n'),
       buildCheckGrid(`/检定 ${costApt} `),
     )
@@ -389,7 +389,7 @@ async function handleCheck(
 
     const costBefore = player.aptitudes[costApt] ?? 0
     if (costBefore < 1) {
-      result = { error: `扣费资质 **${costApt}** 的 QA 不足（当前 ${costBefore}，需要 ≥ 1）。` }
+      result = { error: `扣费资质 **${costApt}** 不足（当前 ${costBefore}，需要 ≥ 1）。` }
       return
     }
 
@@ -539,9 +539,9 @@ function renderCheck(r: CheckResult): string {
   if (r.d20 === 3) {
     lines.push('> 掷出 3 → 自动成功并达成三重升华')
   } else if (r.d20 === 7) {
-    lines.push(`> 掷出 7 → 自动失败，**${r.addApt}** 剩余 QA 全部失去（−${r.loseAllQa}）`)
+    lines.push(`> 掷出 7 → 自动失败，**${r.addApt}** 剩余资质全部失去（−${r.loseAllQa}）`)
   } else {
-    lines.push(`加值资质　**${r.addApt}** 当前 QA **${r.addQa}**`)
+    lines.push(`加值资质　**${r.addApt}** 当前值 **${r.addQa}**`)
     lines.push(`最终值　**${r.d20} + ${r.addQa} = ${r.finalValue}**（> 10 成功）`)
   }
   lines.push('')

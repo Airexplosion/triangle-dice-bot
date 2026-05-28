@@ -86,13 +86,13 @@ export function registerPostRollCommands(ctx: Context, deps: PostRollDeps): void
 
   // ─── d10 调整（±1，花 1 QA 或 3 申诫；向导）───
   ctx
-    .command('d10调 [dir:string] [cost:string]', '骰后：花 1 QA 或 3 申诫调整 d10 ±1')
+    .command('d10调 [dir:string] [cost:string]', '骰后：花 1 资质 或 3 申诫调整 d10 ±1')
     .action(async ({ session }, dir, cost) =>
       handleDieAdjust(deps, session, 'd10', dir, cost),
     )
   // ─── d6 调整（设任意点数，花 1 QA / 1 任意资质 / 3 申诫；向导）───
   ctx
-    .command('d6调 [val:string] [cost:string] [anyApt:string]', '骰后：花 1 QA 或 3 申诫把 d6 设成任意点数')
+    .command('d6调 [val:string] [cost:string] [anyApt:string]', '骰后：花 1 资质 或 3 申诫把 d6 设成任意点数')
     .action(async ({ session }, val, cost, anyApt) =>
       handleDieAdjust(deps, session, 'd6', val, cost, anyApt),
     )
@@ -121,8 +121,8 @@ function recomputeAnomaly(
 }
 
 const COST_LABEL: Record<string, string> = {
-  qa: '1 资质 QA',
-  anyqa: '1 任意资质 QA',
+  qa: '1 资质',
+  anyqa: '1 任意资质',
   申诫: '3 申诫',
 }
 
@@ -188,8 +188,8 @@ async function handleDieAdjust(
         ].join('\n'),
         [
           [
-            { label: 'QA +1', data: '/d10调 加 qa', primary: true, type: 'input', enter: true },
-            { label: 'QA −1', data: '/d10调 减 qa', primary: true, type: 'input', enter: true },
+            { label: '资质 +1', data: '/d10调 加 qa', primary: true, type: 'input', enter: true },
+            { label: '资质 −1', data: '/d10调 减 qa', primary: true, type: 'input', enter: true },
           ],
           [
             { label: '申诫 +1', data: '/d10调 加 申诫', type: 'input', enter: true },
@@ -216,7 +216,7 @@ async function handleDieAdjust(
         [
           `# 设定 d6（当前 **${pending.d6Roll}**）`,
           '',
-          '选择目标点数（花 1 资质 QA 或 3 申诫）：',
+          '选择目标点数（花 1 资质 或 3 申诫）：',
           '> 3 → 1 个 3；6 → 2 个 3；其余 → +1 混沌',
         ].join('\n'),
         grid,
@@ -233,7 +233,7 @@ async function handleDieAdjust(
   if (cost !== 'qa' && cost !== '申诫' && cost !== 'anyqa') {
     const base = kind === 'd10' ? `/d10调 ${arg1}` : `/d6调 ${target}`
     const row1: QQButton[] = [
-      { label: '用 1 资质 QA', data: `${base} qa`, primary: true, type: 'input', enter: true },
+      { label: '用 1 资质', data: `${base} qa`, primary: true, type: 'input', enter: true },
     ]
     // 「用 1 任意资质」仅 d6 支持（d6调 命令带第三参；d10调 不带）
     if (kind === 'd6') {
@@ -273,7 +273,7 @@ async function handleDieAdjust(
       await reply(
         session,
         deps,
-        [`# d6 → ${target}`, '', '选择要消耗 1 点 QA 的资质：'].join('\n'),
+        [`# d6 → ${target}`, '', '选择要消耗 1 点的资质：'].join('\n'),
         grid,
       )
       return
@@ -300,7 +300,7 @@ async function handleDieAdjust(
     if (cost === 'qa' || cost === 'anyqa') {
       const curQa = player.aptitudes[payApt] ?? 0
       if (curQa < 1) {
-        outcome = `> 资质 **${payApt}** QA 不足（当前 ${curQa}，需要 1）。`
+        outcome = `> 资质 **${payApt}** 不足（当前 ${curQa}，需要 1）。`
         return
       }
       player.aptitudes[payApt] = curQa - 1
@@ -711,7 +711,7 @@ async function handle(
     await reply(
       session,
       deps,
-      '> d10 模式下不支持 **增加成功 / 减少成功**。\n> 请用 QA / 申诫调整 d10 面（机制不在 bot 内）。',
+      '> d10 模式下不支持 **增加成功 / 减少成功**。\n> 请用 资质 / 申诫调整 d10 面。',
     )
     return
   }
