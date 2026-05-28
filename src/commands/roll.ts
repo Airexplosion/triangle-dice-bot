@@ -154,34 +154,17 @@ export function registerRollCommands(ctx: Context, deps: RollDeps): void {
     .command('异常能力 <aptitude:string> [diceMode:string]', '使用异常能力触发骰点')
     .action(async ({ session }, aptitude, diceMode) => {
       if (!session) return
-      // 不带参数：优先读角色异常能力列表，渲染"XX：资质"按钮 + 一个"常规异常"fallback
-      if (!aptitude && !session.isDirect && deps.web && session.userId) {
-        const rawRoomId = rawRoomIdOf(session)
-        const resp = await deps.web.getCharacterAnomalies(session.userId, rawRoomId ?? undefined)
-        if (resp?.success && resp.anomalies?.length) {
-          const valid = resp.anomalies.filter((a) => !!a.qualName)
-          if (valid.length) {
-            const buttons: QQButton[][] = []
-            for (let i = 0; i < valid.length; i += 2) {
-              buttons.push(
-                valid.slice(i, i + 2).map((a) => ({
-                  label: `${a.name}：${a.qualName!}`,
-                  // 直接复用 6D4 路径：input+enter "/异常能力 <资质>"
-                  data: `/异常能力 ${a.qualName!}`,
-                  type: 'input' as const,
-                  enter: true,
-                })),
-              )
-            }
-            buttons.push([{ label: '异常', data: '/异常能力 __GRID__', type: 'input', enter: true }])
-            const head = resp.characterName
-              ? `# 异常能力（${resp.characterName}）\n\n点击触发：`
-              : '# 异常能力\n\n点击触发：'
-            await reply(session, deps, head, buttons)
-            return
-          }
+      // 无参 / __LIST__ <页>：显示分页异常能力列表（文字编号 + 数字按钮）
+      if ((!aptitude || aptitude === '__LIST__') && !session.isDirect && deps.web && session.userId) {
+        const page = aptitude === '__LIST__' ? Number.parseInt(diceMode ?? '1', 10) || 1 : 1
+        const shown = await showAnomalyList(ctx, deps, session, page)
+        if (shown) return
+        // __LIST__ 但没异常（异常状态变了）→ 落九宫格
+        if (aptitude === '__LIST__') {
+          await reply(session, deps, `# 异常能力\n\n请选择资质：`, buildAptitudeGrid('异常能力'))
+          return
         }
-        // 没绑卡 / 没异常 / 全部 qualName=null → 退回 9 资质九宫格
+        // 无参且没异常 / 没绑卡 → 退回 9 资质九宫格
       }
       // "常规异常"按钮：显式落到九宫格
       if (aptitude === '__GRID__') {
@@ -215,6 +198,67 @@ export function registerRollCommands(ctx: Context, deps: RollDeps): void {
     .action(async ({ session }, costApt, addApt) =>
       handleCheck(ctx, deps, session, costApt, addApt),
     )
+}
+
+/**
+ * 显示分页的异常能力列表：异常名 + 资质以文字编号列出，按钮只放序号（每行 4 个，每页 8 个）。
+ * 序号按钮 data = `/异常能力 <资质>`（点击直接触发该异常对应资质的骰点）。
+ * 返回 true 表示已渲染列表；false 表示无可用异常（调用方应退回九宫格）。
+ */
+async function showAnomalyList(
+  ctx: Context,
+  deps: RollDeps,
+  session: import('koishi').Session,
+  page: number,
+): Promise<boolean> {
+  if (!deps.web || !session.userId) return false
+  const rawRoomId = rawRoomIdOf(session)
+  const resp = await deps.web.getCharacterAnomalies(session.userId, rawRoomId ?? undefined)
+  if (!resp?.success || !resp.anomalies?.length) return false
+  const valid = resp.anomalies.filter((a) => !!a.qualName)
+  if (!valid.length) return false
+
+  const PAGE = 8
+  const total = valid.length
+  const totalPages = Math.max(1, Math.ceil(total / PAGE))
+  const cur = Math.max(1, Math.min(page, totalPages))
+  const start = (cur - 1) * PAGE
+  const slice = valid.slice(start, start + PAGE)
+
+  const head = resp.characterName ? `# 异常能力（${resp.characterName}）` : '# 异常能力'
+  const lines: string[] = [head, '']
+  if (totalPages > 1) lines.push(`第 ${cur} / ${totalPages} 页　共 ${total} 项`)
+  lines.push('点击下方序号触发：')
+  lines.push('')
+  slice.forEach((a, i) => {
+    lines.push(`**${start + i + 1}.** ${a.name}（${a.qualName}）`)
+  })
+
+  // 数字按钮：每行 4 个
+  const numButtons: QQButton[] = slice.map((a, i) => ({
+    label: String(start + i + 1),
+    data: `/异常能力 ${a.qualName!}`,
+    type: 'input',
+    enter: true,
+  }))
+  const rows: QQButton[][] = []
+  for (let i = 0; i < numButtons.length; i += 4) {
+    rows.push(numButtons.slice(i, i + 4))
+  }
+  // 翻页
+  const nav: QQButton[] = []
+  if (cur > 1) {
+    nav.push({ label: '上一页', data: `/异常能力 __LIST__ ${cur - 1}`, type: 'input', enter: true })
+  }
+  if (cur < totalPages) {
+    nav.push({ label: '下一页', data: `/异常能力 __LIST__ ${cur + 1}`, primary: true, type: 'input', enter: true })
+  }
+  if (nav.length) rows.push(nav)
+  // 常规异常（九宫格）入口
+  rows.push([{ label: '常规异常', data: '/异常能力 __GRID__', type: 'input', enter: true }])
+
+  await reply(session, deps, lines.join('\n'), rows)
+  return true
 }
 
 /** 检定向导用的 3x3 资质九宫格；每个按钮 data = `${prefix}${资质}`（input+enter）。 */
