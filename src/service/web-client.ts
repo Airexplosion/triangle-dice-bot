@@ -511,6 +511,8 @@ export interface CharacterAnomaliesResp {
     trained: boolean
   }>
   error?: string
+  /** 角色卡已归档（机器人不可操作）。 */
+  archived?: boolean
 }
 
 export interface CharacterHighWallsResp {

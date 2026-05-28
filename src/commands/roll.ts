@@ -137,10 +137,14 @@ export function registerRollCommands(ctx: Context, deps: RollDeps): void {
     .command('现实修改 <aptitude:string>', '使用现实修改触发骰点')
     .action(async ({ session }, aptitude) => {
       if (!session) return
-      // G3 解锁 → 现实修改 自动摇 d8（"赞助骰"，无用户选项）
+      // 归档拦截 + G3 解锁判定（合用一次 getDiceUnlocks）
       let useD8 = false
-      if (aptitude && APTITUDE_SET.has(aptitude) && !session.isDirect) {
+      if (!session.isDirect && deps.web && session.userId) {
         const unlocks = await getDiceUnlocks(ctx, deps, session)
+        if (unlocks.archived) {
+          await reply(session, deps, '> 该角色卡已归档，机器人无法对其进行骰点 / 操作。')
+          return
+        }
         useD8 = unlocks.g3
       }
       return handle(ctx, deps, session, '现实修改', aptitude, {
@@ -157,8 +161,12 @@ export function registerRollCommands(ctx: Context, deps: RollDeps): void {
       // 无参 / __LIST__ <页>：显示分页异常能力列表（文字编号 + 数字按钮）
       if ((!aptitude || aptitude === '__LIST__') && !session.isDirect && deps.web && session.userId) {
         const page = aptitude === '__LIST__' ? Number.parseInt(diceMode ?? '1', 10) || 1 : 1
-        const shown = await showAnomalyList(ctx, deps, session, page)
-        if (shown) return
+        const r = await showAnomalyList(ctx, deps, session, page)
+        if (r === 'archived') {
+          await reply(session, deps, '> 该角色卡已归档，机器人无法对其进行骰点 / 操作。')
+          return
+        }
+        if (r === 'shown') return
         // __LIST__ 但没异常（异常状态变了）→ 落九宫格
         if (aptitude === '__LIST__') {
           await reply(session, deps, `# 异常能力\n\n请选择资质：`, buildAptitudeGrid('异常能力'))
@@ -203,20 +211,24 @@ export function registerRollCommands(ctx: Context, deps: RollDeps): void {
 /**
  * 显示分页的异常能力列表：异常名 + 资质以文字编号列出，按钮只放序号（每行 4 个，每页 8 个）。
  * 序号按钮 data = `/异常能力 <资质>`（点击直接触发该异常对应资质的骰点）。
- * 返回 true 表示已渲染列表；false 表示无可用异常（调用方应退回九宫格）。
+ * 返回：
+ *   'shown'    — 已渲染列表
+ *   'archived' — 角色卡已归档（调用方应提示已归档、不再展示任何骰点 UI）
+ *   'none'     — 无可用异常 / 未绑卡（调用方退回九宫格）
  */
 async function showAnomalyList(
   ctx: Context,
   deps: RollDeps,
   session: import('koishi').Session,
   page: number,
-): Promise<boolean> {
-  if (!deps.web || !session.userId) return false
+): Promise<'shown' | 'archived' | 'none'> {
+  if (!deps.web || !session.userId) return 'none'
   const rawRoomId = rawRoomIdOf(session)
   const resp = await deps.web.getCharacterAnomalies(session.userId, rawRoomId ?? undefined)
-  if (!resp?.success || !resp.anomalies?.length) return false
+  if (resp?.archived) return 'archived'
+  if (!resp?.success || !resp.anomalies?.length) return 'none'
   const valid = resp.anomalies.filter((a) => !!a.qualName)
-  if (!valid.length) return false
+  if (!valid.length) return 'none'
 
   const PAGE = 8
   const total = valid.length
@@ -258,7 +270,7 @@ async function showAnomalyList(
   rows.push([{ label: '常规异常', data: '/异常能力 __GRID__', type: 'input', enter: true }])
 
   await reply(session, deps, lines.join('\n'), rows)
-  return true
+  return 'shown'
 }
 
 /** 检定向导用的 3x3 资质九宫格；每个按钮 data = `${prefix}${资质}`（input+enter）。 */
