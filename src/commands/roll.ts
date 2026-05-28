@@ -63,19 +63,20 @@ async function getDiceUnlocks(
   ctx: Context,
   deps: RollDeps,
   session: import('koishi').Session,
-): Promise<{ u2: boolean; n1: boolean; g3: boolean; t3: boolean }> {
-  const none = { u2: false, n1: false, g3: false, t3: false }
+): Promise<{ u2: boolean; n1: boolean; g3: boolean; t3: boolean; archived: boolean }> {
+  const none = { u2: false, n1: false, g3: false, t3: false, archived: false }
   if (!deps.web || !session.userId) return none
   try {
     const groupId = session.isDirect ? undefined : rawRoomIdOf(session) ?? undefined
     const r = await deps.web.getCharacterHighWalls(session.userId, groupId)
-    if (!r?.success || !r.highWalls) return none
+    if (!r?.success || !r.highWalls) return { ...none, archived: !!r?.archived }
     const codes = new Set(r.highWalls.map((w) => fileCode(w.filename)))
     return {
       u2: codes.has('U2'),
       n1: codes.has('N1'),
       g3: codes.has('G3'),
       t3: codes.has('T3'),
+      archived: false,
     }
   } catch (e) {
     ctx.logger('triangle').warn('getDiceUnlocks failed: %s', (e as Error).message ?? e)
@@ -256,6 +257,10 @@ async function handleCheck(
   }
 
   const unlocks = await getDiceUnlocks(ctx, deps, session)
+  if (unlocks.archived) {
+    await reply(session, deps, '> 该角色卡已归档，机器人无法对其进行检定 / 操作。')
+    return
+  }
   if (!unlocks.t3) {
     await reply(
       session,
@@ -309,6 +314,10 @@ async function handleCheck(
   let webAptitudes: Record<string, number> | null = null
   if (deps.web && playerId) {
     const apt = await deps.web.getAptitudes(playerId, rawRoomId)
+    if (apt?.archived) {
+      await reply(session, deps, '> 该角色卡已归档，机器人无法对其进行检定 / 操作。')
+      return
+    }
     if (apt?.success && apt.attrs) webAptitudes = mapWebAttrsToAptitudes(apt.attrs)
   }
 
@@ -607,6 +616,10 @@ async function handle(
   let webAptitudes: Record<string, number> | null = null
   if (deps.web && playerId) {
     const apt = await deps.web.getAptitudes(playerId, rawRoomId)
+    if (apt?.archived) {
+      await reply(session, deps, '> 该角色卡已归档，机器人无法对其进行骰点 / 操作。')
+      return
+    }
     if (apt?.success && apt.attrs) {
       webAptitudes = mapWebAttrsToAptitudes(apt.attrs)
       ctx.logger('triangle').info(

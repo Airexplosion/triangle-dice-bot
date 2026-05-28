@@ -312,11 +312,13 @@ function handleHttpError<T>(
   const status = err.response?.status
   if (status && status >= 400 && status < 500) {
     const body = err.response?.data
-    const errorMsg =
-      (typeof body === 'object' && body && 'error' in body
-        ? String((body as { error: unknown }).error)
-        : null) ?? err.message ?? '请求失败'
-    return { success: false, error: errorMsg } as unknown as T
+    if (typeof body === 'object' && body) {
+      // 透传服务端返回的全部字段（含 archived 等），并补 success:false
+      const errorMsg =
+        'error' in body ? String((body as { error: unknown }).error) : (err.message ?? '请求失败')
+      return { success: false, ...(body as object), error: errorMsg } as unknown as T
+    }
+    return { success: false, error: err.message ?? '请求失败' } as unknown as T
   }
   log.warn(
     '%s %s failed: status=%s msg=%s',
@@ -350,6 +352,8 @@ export interface GetAptitudesResp {
   attrs?: Record<string, unknown>
   characterId?: string | number
   error?: string
+  /** 角色卡已归档（机器人不可操作）。 */
+  archived?: boolean
 }
 
 export interface CharacterStatusResp {
@@ -525,4 +529,6 @@ export interface CharacterHighWallsResp {
     isActive: boolean | null
   }>
   error?: string
+  /** 角色卡已归档（机器人不可操作）。 */
+  archived?: boolean
 }
