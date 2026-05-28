@@ -1,5 +1,5 @@
 import type { Argv, Context } from 'koishi'
-import { HELP_TEXT } from '../const'
+import { HELP_PAGES } from '../const'
 import type { PendingAdminApplications, PendingRollStore } from '../service/pending'
 import type { RoomStore } from '../service/store'
 import type { WebClient } from '../service/web-client'
@@ -84,19 +84,39 @@ export function registerCommands(ctx: Context, deps: CommandDeps): void {
   }
   const todoMd = (phase: 'P2' | 'P3' | 'P4', label: string) => md(TODO(phase, label))
 
-  // ========== help ==========
+  // ========== help（分页）==========
   // 用户已在 Koishi 控制台禁用 @koishijs/plugin-help，'帮助' 名字可用
-  const helpButtons: QQButton[][] = [
-    [
+  const TOTAL_HELP_PAGES = HELP_PAGES.length
+  const buildHelpButtons = (page: number): QQButton[][] => {
+    const nav: QQButton[] = []
+    if (page > 1) {
+      nav.push({ label: '上一页', data: `/帮助 ${page - 1}`, type: 'input', enter: true })
+    }
+    if (page < TOTAL_HELP_PAGES) {
+      nav.push({ label: '下一页', data: `/帮助 ${page + 1}`, primary: true, type: 'input', enter: true })
+    }
+    const rows: QQButton[][] = []
+    if (nav.length) rows.push(nav)
+    // 常用快捷入口固定一行
+    rows.push([
       { label: '任务', data: '/查看任务', type: 'input', enter: true },
       { label: '角色', data: '/查询角色', type: 'input', enter: true },
       { label: '状态', data: '/查询状态', type: 'input', enter: true },
-    ],
-  ]
+    ])
+    return rows
+  }
   ctx
-    .command('帮助')
+    .command('帮助 [page:string]')
     .alias('骰点帮助', '菜单')
-    .action(md(HELP_TEXT, helpButtons))
+    .action(async (argv, page) => {
+      if (!argv.session) return
+      const n = Number.parseInt((page ?? '1').trim(), 10)
+      const cur = Number.isNaN(n) ? 1 : Math.max(1, Math.min(n, TOTAL_HELP_PAGES))
+      await sendQQMarkdown(argv.session, HELP_PAGES[cur - 1], {
+        enabled: deps.useMarkdown,
+        buttons: buildHelpButtons(cur),
+      })
+    })
 
   // ========== P2: 骰点核心（已实装，群+任务场景下自动 sync 到 web） ==========
   registerRollCommands(ctx, {
