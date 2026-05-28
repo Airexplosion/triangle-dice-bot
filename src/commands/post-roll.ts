@@ -36,6 +36,25 @@ export interface PostRollDeps {
 
 const NON_THREE = [1, 2, 4]
 
+/**
+ * 统一判定本次骰点是否三重升华（含 d8 原始路径）。
+ * 两条路径任一成立即升华：
+ *   1) 燃尽后判定：currentDice 3 数 + d6 + d8Delta === 3（既有语义，含燃尽后凑成）
+ *   2) d8 原始路径：仅 d8 在场时，原始 6D4 的 3 数 + d6 + d8Delta === 3（绕过燃尽）
+ * 第 2 条用 d8Roll 守卫，保证无 d8 流程行为完全不变。
+ */
+function isTripleWithRaw(
+  pending: import('../types').PendingRoll,
+  dice: readonly number[],
+  d8Delta: number,
+): boolean {
+  if (isTripleSublimation(dice, pending.d6Roll, d8Delta)) return true
+  if (pending.d8Roll !== null) {
+    return pending.rawThreeCount + d6ThreeCount(pending.d6Roll) + d8Delta === 3
+  }
+  return false
+}
+
 export function registerPostRollCommands(ctx: Context, deps: PostRollDeps): void {
   ctx
     .command('增加成功 <count:posint>', '骰后修改：增加成功（消耗资质）')
@@ -109,21 +128,21 @@ async function handleD8Delta(
   await deps.rooms.update(roomId, session.platform, rawRoomId, (room) => {
     const dice = pending.currentDice
     const oldDelta = pending.d8Delta
-    const oldSuccesses =
-      countSuccesses(dice) + d6ThreeCount(pending.d6Roll) + oldDelta
+    const oldTriple = isTripleWithRaw(pending, dice, oldDelta)
+    const oldSuccesses = oldTriple
+      ? 3
+      : countSuccesses(dice) + d6ThreeCount(pending.d6Roll) + oldDelta
     const oldChaos = pending.chaosApplied
 
     pending.d8Delta = newDelta
 
-    const newSuccesses =
-      countSuccesses(dice) + d6ThreeCount(pending.d6Roll) + newDelta
-    const triple = isTripleSublimation(dice, pending.d6Roll, newDelta)
-    const newChaos = calculateChaos(
-      dice,
-      pending.unconsumedBurnout,
-      pending.d6Roll,
-      newDelta,
-    )
+    const triple = isTripleWithRaw(pending, dice, newDelta)
+    const newSuccesses = triple
+      ? 3
+      : countSuccesses(dice) + d6ThreeCount(pending.d6Roll) + newDelta
+    const newChaos = triple
+      ? 0
+      : calculateChaos(dice, pending.unconsumedBurnout, pending.d6Roll, newDelta)
     const isMember = isMissionMember(room, playerId)
     const chaosDiff = isMember ? newChaos - oldChaos : 0
 
@@ -378,9 +397,10 @@ async function handle(
     }
 
     const oldDice = pending.currentDice
-    // 总成功数 = d4 + d6 + d8 当前增量贡献
-    const oldSuccesses =
-      countSuccesses(oldDice) + d6ThreeCount(pending.d6Roll) + pending.d8Delta
+    // 总成功数 = d4 + d6 + d8 当前增量贡献（三重升华时记 3）
+    const oldSuccesses = isTripleWithRaw(pending, oldDice, pending.d8Delta)
+      ? 3
+      : countSuccesses(oldDice) + d6ThreeCount(pending.d6Roll) + pending.d8Delta
     const oldChaos = pending.chaosApplied
     const dice = [...oldDice]
 
@@ -407,14 +427,18 @@ async function handle(
     }
 
     // 后修改重算时把 d6 / d8 都带上（自身不在 d4 池里，但贡献的 3 数 / 混沌仍参与判定）
-    const newSuccesses =
-      countSuccesses(dice) + d6ThreeCount(pending.d6Roll) + pending.d8Delta
-    const newChaos = calculateChaos(
-      dice,
-      pending.unconsumedBurnout,
-      pending.d6Roll,
-      pending.d8Delta,
-    )
+    const newTriple = isTripleWithRaw(pending, dice, pending.d8Delta)
+    const newSuccesses = newTriple
+      ? 3
+      : countSuccesses(dice) + d6ThreeCount(pending.d6Roll) + pending.d8Delta
+    const newChaos = newTriple
+      ? 0
+      : calculateChaos(
+          dice,
+          pending.unconsumedBurnout,
+          pending.d6Roll,
+          pending.d8Delta,
+        )
     const isMember = isMissionMember(room, playerId)
     // 观察模式：不影响混沌池/失败计数；chaosDiff 仅用于显示
     const chaosDiff = isMember ? newChaos - oldChaos : 0

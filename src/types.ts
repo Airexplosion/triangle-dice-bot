@@ -39,6 +39,12 @@ export interface PendingRoll {
   trigger: string
   aptitudeName: string
   currentDice: number[]
+  /**
+   * 原始 6D4 中 3 的个数（燃尽 / 增减成功 前）。
+   * 用于"原始三连升华"判定：原始 3 数 + d6 + d8Delta === 3 即升华（绕过燃尽）。
+   * d10 模式下为 0（d10 无 6D4）。
+   */
+  rawThreeCount: number
   chaosApplied: number
   failureIncremented: boolean
   unconsumedBurnout: number

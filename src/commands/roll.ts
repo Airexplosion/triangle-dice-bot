@@ -392,6 +392,7 @@ async function handle(
       trigger,
       aptitudeName: aptName,
       currentDice: useD10 ? [] : [...burnedDice],
+      rawThreeCount: useD10 ? 0 : countSuccesses(rawDice),
       chaosApplied,
       failureIncremented,
       unconsumedBurnout: unconsumed,
