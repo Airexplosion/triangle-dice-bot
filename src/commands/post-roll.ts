@@ -157,11 +157,12 @@ async function handleDieAdjust(
   }
 
   // ── 解析 target ──
+  // 注意：方向用「加 / 减」而非「+1 / -1」，因为 Koishi 把 -1 当成选项标志、解析不到位置参数。
   let target: number | null = null
   if (kind === 'd10') {
     const cur = pending.d10Roll!
-    if (arg1 === '1' || arg1 === '+1') target = Math.min(10, cur + 1)
-    else if (arg1 === '-1') target = Math.max(1, cur - 1)
+    if (arg1 === '加' || arg1 === '1' || arg1 === '+1') target = Math.min(10, cur + 1)
+    else if (arg1 === '减') target = Math.max(1, cur - 1)
   } else {
     const v = Number.parseInt(arg1 ?? '', 10)
     if (v >= 1 && v <= 6) target = v
@@ -180,8 +181,8 @@ async function handleDieAdjust(
         ].join('\n'),
         [
           [
-            { label: '+1', data: '/d10调 1', primary: true, type: 'input', enter: true },
-            { label: '−1', data: '/d10调 -1', type: 'input', enter: true },
+            { label: '+1', data: '/d10调 加', primary: true, type: 'input', enter: true },
+            { label: '−1', data: '/d10调 减', type: 'input', enter: true },
           ],
         ],
       )
