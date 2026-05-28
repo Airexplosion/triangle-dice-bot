@@ -21,6 +21,7 @@ import type { WebClient } from '../service/web-client'
 import { isMissionMember } from '../util/mission'
 import { sendQQMarkdown, type QQButton } from '../util/qq-markdown'
 import {
+  d8DeltaButtonRows,
   d8DeltaOptions,
   formatDice,
   labelD8Delta,
@@ -204,17 +205,8 @@ async function handleD8Delta(
     }
   }
 
-  // 按钮：保留增量调整 + 撤回，方便继续微调
-  const btns: QQButton[][] = []
-  btns.push(
-    d8DeltaOptions(o.d8Roll).map((v) => ({
-      label: v > 0 ? `+${v}个3` : v < 0 ? `−${-v}个3` : '忽略',
-      data: `/d8 ${v}`,
-      primary: o.newDelta === v,
-      type: 'input' as const,
-      enter: true,
-    })),
-  )
+  // 按钮：保留增量调整（每行最多 3 个）+ 撤回，方便继续微调
+  const btns: QQButton[][] = [...d8DeltaButtonRows(o.d8Roll, o.newDelta)]
   btns.push([{ label: '撤回', data: '/撤回骰点', type: 'input', enter: true }])
 
   await reply(session, deps, renderD8DeltaChange(o), btns)

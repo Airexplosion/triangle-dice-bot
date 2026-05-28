@@ -978,6 +978,36 @@ export function d8DeltaOptions(d8: number | null): number[] {
   return opts
 }
 
+/** d8 增量按钮文字：+2 → "+2个3"，-1 → "−1个3"，0 → "忽略"。 */
+function d8DeltaLabel(v: number): string {
+  return v > 0 ? `+${v}个3` : v < 0 ? `−${-v}个3` : '忽略'
+}
+
+/**
+ * d8 增量选择按钮，按每行最多 3 个切成多行（d8=6 的 5 个选项 → 2 行，避免单行过挤）。
+ * currentDelta 高亮当前选中项。
+ */
+export function d8DeltaButtonRows(
+  d8: number | null,
+  currentDelta: number,
+): QQButton[][] {
+  const opts = d8DeltaOptions(d8)
+  if (opts.length === 0) return []
+  const rows: QQButton[][] = []
+  for (let i = 0; i < opts.length; i += 3) {
+    rows.push(
+      opts.slice(i, i + 3).map((v) => ({
+        label: d8DeltaLabel(v),
+        data: `/d8 ${v}`,
+        primary: currentDelta === v,
+        type: 'input' as const,
+        enter: true,
+      })),
+    )
+  }
+  return rows
+}
+
 function renderRollButtons(r: RollResult): QQButton[][] {
   // d10 模式没有 d4 池，"增/减成功"按钮不适用，只留撤回 + 再投
   if (r.d10Roll !== null) {
@@ -999,18 +1029,9 @@ function renderRollButtons(r: RollResult): QQButton[][] {
     { label: '成功+1', data: '/增加成功 1', primary: true, type: 'input', enter: true },
     { label: '成功-1', data: '/减少成功 1', type: 'input', enter: true },
   ])
-  // d8 = 3 / 6 时，给精确增量按钮（高亮当前选中项）
-  //   d8=3 → [+1] [0] [-1]；d8=6 → [+2] [+1] [0] [-1] [-2]
+  // d8 = 3 / 6 时，给精确增量按钮（每行最多 3 个；d8=6 自动拆两行）
   if (r.d8Roll !== null && d8ThreeCount(r.d8Roll) > 0) {
-    rows.push(
-      d8DeltaOptions(r.d8Roll).map((v) => ({
-        label: v > 0 ? `+${v}个3` : v < 0 ? `−${-v}个3` : '忽略',
-        data: `/d8 ${v}`,
-        primary: r.d8Delta === v,
-        type: 'input' as const,
-        enter: true,
-      })),
-    )
+    rows.push(...d8DeltaButtonRows(r.d8Roll, r.d8Delta))
   }
   rows.push([
     { label: '撤回', data: '/撤回骰点', type: 'input', enter: true },
