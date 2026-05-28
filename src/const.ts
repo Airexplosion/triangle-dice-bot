@@ -131,3 +131,12 @@ export const HELP_PAGES: readonly string[] = [
 共情　主动　坚毅
 气场　专业　诡秘`,
 ] as const
+
+/**
+ * 检定（T3 高墙）帮助片段。仅解锁 T3 的角色在 /帮助 第 1 页底部能看到，
+ * 未解锁者完全不展示。
+ */
+export const HELP_CHECK_SECTION = `## 检定
+
+**检定**
+一次简单的检定罢了。`

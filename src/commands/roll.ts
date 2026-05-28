@@ -38,6 +38,25 @@ function fileCode(filename: string): string {
   return filename.replace(/\.md$/i, '').split(' ')[0].toUpperCase()
 }
 
+/** 该 QQ 用户绑定角色是否解锁了某高墙代码（如 'T3'）。
+ *  web 不可用 / 未绑卡 / 网络失败 → false。供帮助页等处条件展示用。 */
+export async function characterHasHighWall(
+  web: WebClient | null,
+  session: import('koishi').Session,
+  code: string,
+): Promise<boolean> {
+  if (!web || !session.userId) return false
+  try {
+    const groupId = session.isDirect ? undefined : rawRoomIdOf(session) ?? undefined
+    const r = await web.getCharacterHighWalls(session.userId, groupId)
+    if (!r?.success || !r.highWalls) return false
+    const target = code.toUpperCase()
+    return r.highWalls.some((w) => fileCode(w.filename) === target)
+  } catch {
+    return false
+  }
+}
+
 /** 该 QQ 用户绑定的角色解锁了哪些"额外骰"高墙。
  *  web 不可用 / 未绑卡 / 网络失败 → 一律全 false（安静降级，不打扰用户）。 */
 async function getDiceUnlocks(

@@ -1,5 +1,5 @@
 import type { Argv, Context } from 'koishi'
-import { HELP_PAGES } from '../const'
+import { HELP_CHECK_SECTION, HELP_PAGES } from '../const'
 import type { PendingAdminApplications, PendingRollStore } from '../service/pending'
 import type { RoomStore } from '../service/store'
 import type { WebClient } from '../service/web-client'
@@ -12,7 +12,7 @@ import { registerMissionCommands } from './mission'
 import { registerPostRollCommands } from './post-roll'
 import { registerQueryCommands } from './query'
 import { registerReportCommands } from './report'
-import { registerRollCommands } from './roll'
+import { characterHasHighWall, registerRollCommands } from './roll'
 
 export interface CommandDeps {
   rooms: RoomStore
@@ -112,7 +112,12 @@ export function registerCommands(ctx: Context, deps: CommandDeps): void {
       if (!argv.session) return
       const n = Number.parseInt((page ?? '1').trim(), 10)
       const cur = Number.isNaN(n) ? 1 : Math.max(1, Math.min(n, TOTAL_HELP_PAGES))
-      await sendQQMarkdown(argv.session, HELP_PAGES[cur - 1], {
+      let content = HELP_PAGES[cur - 1]
+      // 检定（T3）仅对已解锁角色，在第 1 页底部追加
+      if (cur === 1 && (await characterHasHighWall(deps.web, argv.session, 'T3'))) {
+        content += `\n\n\n${HELP_CHECK_SECTION}`
+      }
+      await sendQQMarkdown(argv.session, content, {
         enabled: deps.useMarkdown,
         buttons: buildHelpButtons(cur),
       })
