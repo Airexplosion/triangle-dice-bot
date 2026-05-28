@@ -178,12 +178,16 @@ async function handleDieAdjust(
         [
           `# 调整 d10（当前 **${pending.d10Roll}**）`,
           '',
-          '每次 ±1（10 与 1 不相连），花 1 资质 QA 或 3 申诫：',
+          '每次 ±1（10 与 1 不相连）。选方向 + 支付方式：',
         ].join('\n'),
         [
           [
-            { label: '+1', data: '/d10调 加', primary: true, type: 'input', enter: true },
-            { label: '−1', data: '/d10调 减', type: 'input', enter: true },
+            { label: 'QA +1', data: '/d10调 加 qa', primary: true, type: 'input', enter: true },
+            { label: 'QA −1', data: '/d10调 减 qa', primary: true, type: 'input', enter: true },
+          ],
+          [
+            { label: '申诫 +1', data: '/d10调 加 申诫', type: 'input', enter: true },
+            { label: '申诫 −1', data: '/d10调 减 申诫', type: 'input', enter: true },
           ],
         ],
       )
