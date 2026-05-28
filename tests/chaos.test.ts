@@ -226,6 +226,13 @@ describe('isUnleashActivated with d10', () => {
   it('d10=7 + d6=3 = 8 → 超过，不激活', () => {
     expect(isUnleashActivated([], 3, 7)).toBe(false)
   })
+  // 开发者澄清点 1：d10=7 + d6 非 3（1/2/4/5）仍是 7 个 3 → 触发
+  it('d10=7 + d6=4(非3) = 7 → UNL3ASH（开发者 RAI）', () => {
+    expect(isUnleashActivated([], 4, 7)).toBe(true)
+    expect(isUnleashActivated([], 1, 7)).toBe(true)
+    expect(isUnleashActivated([], 2, 7)).toBe(true)
+    expect(isUnleashActivated([], 5, 7)).toBe(true)
+  })
   it('d10=3 failure → never UNL3ASH', () => {
     expect(isUnleashActivated([], 6, 3)).toBe(false)
     expect(isUnleashActivated([], 3, 3)).toBe(false)
