@@ -115,17 +115,17 @@ export function isD10Failure(d10: number | null): boolean {
 // ───────── d8（赞助骰）─────────
 // G3 解锁后，**现实修改** 必额外摇一颗 d8（与 6D4 同时投，不替代）。
 //   面值 1/2/4/5/7/8 → 玩家做"赞助商致敬"的角色扮演（bot 不强制判定）
-//   面值 3           → 1 个 3，玩家可选 计入 / 减去 / 忽略
-//   面值 6           → 2 个 3，玩家可选 计入 / 减去 / 忽略
-// d8 不贡献混沌。
-
-export type D8Mode = 'ignore' | 'count' | 'subtract'
+//   面值 3           → 最多 1 个 3，玩家可精确选 计入 +1 / 减去 -1 / 忽略 0
+//   面值 6           → 最多 2 个 3，玩家可精确选 +2 / +1 / 0 / -1 / -2
+// d8 不贡献混沌；但其带符号的 3 数（d8Delta）参与三重升华判定 ——
+// 这是唯一一颗能靠"计入/减去"凑成恰好 3 个 3、从而触发三重升华（混沌归 0）的骰。
+// d8 与 UNL3ASH 无关（UNL3ASH 仅属异常能力，d8 仅属现实修改）。
 
 export function rollD8(rng: Rng = defaultRng): number {
   return randInt(1, 8, rng)
 }
 
-/** d8 原始等效 3 数。3 → 1，6 → 2，其余 → 0。 */
+/** d8 可调整的最大幅度（绝对值）。3 → 1，6 → 2，其余 → 0（无可调 3）。 */
 export function d8ThreeCount(d8: number | null): number {
   if (d8 === 3) return 1
   if (d8 === 6) return 2
@@ -133,16 +133,13 @@ export function d8ThreeCount(d8: number | null): number {
 }
 
 /**
- * d8 按当前 mode 实际贡献的"3 数变化量"。
- *   ignore   → 0
- *   count    → +d8ThreeCount(d8)
- *   subtract → -d8ThreeCount(d8)
- * 当 d8 ∈ {1,2,4,5,7,8} 时 d8ThreeCount=0，mode 无意义，恒返回 0。
+ * 把玩家请求的 d8 增量夹在合法区间 [-max, +max]（max = d8ThreeCount）。
+ * d8 ∈ {1,2,4,5,7,8} 时 max=0，任何请求都夹到 0。
  */
-export function d8SuccessDelta(d8: number | null, mode: D8Mode): number {
-  const base = d8ThreeCount(d8)
-  if (base === 0) return 0
-  if (mode === 'count') return base
-  if (mode === 'subtract') return -base
-  return 0
+export function clampD8Delta(d8: number | null, requested: number): number {
+  const max = d8ThreeCount(d8)
+  if (max === 0) return 0 // 无可调 3（同时避免 -max 产生 -0）
+  if (requested > max) return max
+  if (requested < -max) return -max
+  return requested
 }

@@ -64,11 +64,12 @@ export interface PendingRoll {
    */
   d8Roll: number | null
   /**
-   * 玩家对 d8=3/6 的处理选择：
-   *   'ignore'   = 不计入（默认）
-   *   'count'    = 计入（增加 d8 等效 3 数）
-   *   'subtract' = 减去（减少 d8 等效 3 数）
-   * d8 ∈ {1,2,4,5,7,8} 时此字段无效（d8 等效 3 数恒为 0）。
+   * 玩家对 d8 的"3 数"处理结果（带符号、已 clamp）。
+   *   0  = 忽略（默认）
+   *   +1 / +2 = 计入对应数量的 3
+   *   -1 / -2 = 减去对应数量的 3
+   * 范围由 d8 面值决定（d8=3 → ±1；d8=6 → ±2；其余 → 恒 0）。
+   * 该值直接参与三重升华判定与总成功数计算。
    */
-  d8Mode: 'ignore' | 'count' | 'subtract'
+  d8Delta: number
 }

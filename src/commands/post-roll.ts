@@ -1,11 +1,10 @@
 import type { Context } from 'koishi'
-import { calculateChaos } from '../game/chaos'
+import { calculateChaos, isTripleSublimation } from '../game/chaos'
 import {
+  clampD8Delta,
   countSuccesses,
   d6ThreeCount,
-  d8SuccessDelta,
   d8ThreeCount,
-  type D8Mode,
 } from '../game/dice'
 import { rawRoomIdOf, roomIdOf } from '../room'
 import type { PendingRollStore } from '../service/pending'
@@ -21,7 +20,12 @@ import {
 import type { WebClient } from '../service/web-client'
 import { isMissionMember } from '../util/mission'
 import { sendQQMarkdown, type QQButton } from '../util/qq-markdown'
-import { formatDice } from './roll'
+import {
+  d8DeltaOptions,
+  formatDice,
+  labelD8Delta,
+  TRIPLE_SUBLIMATION_IMG,
+} from './roll'
 
 export interface PostRollDeps {
   rooms: RoomStore
@@ -49,26 +53,20 @@ export function registerPostRollCommands(ctx: Context, deps: PostRollDeps): void
     .command('撤回骰点', '撤销本次骰点的混沌 / 失败计数 / 资质消耗')
     .action(async ({ session }) => handleUndo(deps, session))
 
-  // ─── d8 (赞助骰) 计入 / 减去 / 忽略 ───
+  // ─── d8 (赞助骰) 精确增量：/d8 <delta>（+2/+1/0/-1/-2，自动 clamp）───
   ctx
-    .command('d8计入', '骰后：把 d8=3/6 的 3 数计入总成功')
-    .action(async ({ session }) => handleD8Mode(deps, session, 'count'))
-  ctx
-    .command('d8减去', '骰后：把 d8=3/6 的 3 数从总成功中减去')
-    .action(async ({ session }) => handleD8Mode(deps, session, 'subtract'))
-  ctx
-    .command('d8忽略', '骰后：忽略 d8 的 3 数贡献')
-    .action(async ({ session }) => handleD8Mode(deps, session, 'ignore'))
+    .command('d8 <delta:string>', '骰后：设置 d8 的 3 数增量（如 /d8 1、/d8 -2）')
+    .action(async ({ session }, delta) => handleD8Delta(deps, session, delta))
 }
 
 /**
- * 切换 d8 的"计入 / 减去 / 忽略"模式。
- * 重算总成功 / 混沌 / 现实修改失败标志，把差值写回房间池与 web。
+ * 设置 d8 的"3 数增量"（带符号，自动 clamp 到 [-max,+max]）。
+ * 重算总成功 / 混沌 / 现实修改失败标志（含三重升华），把差值写回房间池与 web。
  */
-async function handleD8Mode(
+async function handleD8Delta(
   deps: PostRollDeps,
   session: import('koishi').Session | undefined,
-  newMode: D8Mode,
+  deltaArg: string | undefined,
 ): Promise<void> {
   if (!session) return
   if (session.isDirect) return reply(session, deps, '> 私聊不支持骰点命令。')
@@ -92,35 +90,39 @@ async function handleD8Mode(
       `> d8 = ${pending.d8Roll} 没有 3 可计入或减去（仅 d8 = 3 / 6 有效）。`,
     )
   }
-  if (pending.d8Mode === newMode) {
-    return reply(session, deps, `> d8 当前已是 **${labelD8Mode(newMode)}**。`)
+
+  const requested = Number.parseInt((deltaArg ?? '').trim(), 10)
+  if (Number.isNaN(requested)) {
+    const opts = d8DeltaOptions(pending.d8Roll).map((v) => `/d8 ${v}`).join('　')
+    return reply(session, deps, `> 用法：\`/d8 <增量>\`\n> 可选：${opts}`)
+  }
+  const newDelta = clampD8Delta(pending.d8Roll, requested)
+
+  if (pending.d8Delta === newDelta) {
+    return reply(session, deps, `> d8 当前已是 **${labelD8Delta(newDelta)}**。`)
   }
 
   await syncFromWeb(deps.web, deps.rooms, session)
 
-  let outcome: D8ModeOutcome | null = null
+  let outcome: D8DeltaOutcome | null = null
 
   await deps.rooms.update(roomId, session.platform, rawRoomId, (room) => {
     const dice = pending.currentDice
-    const oldMode = pending.d8Mode
+    const oldDelta = pending.d8Delta
     const oldSuccesses =
-      countSuccesses(dice) +
-      d6ThreeCount(pending.d6Roll) +
-      d8SuccessDelta(pending.d8Roll, oldMode)
+      countSuccesses(dice) + d6ThreeCount(pending.d6Roll) + oldDelta
     const oldChaos = pending.chaosApplied
 
-    pending.d8Mode = newMode
+    pending.d8Delta = newDelta
 
     const newSuccesses =
-      countSuccesses(dice) +
-      d6ThreeCount(pending.d6Roll) +
-      d8SuccessDelta(pending.d8Roll, newMode)
+      countSuccesses(dice) + d6ThreeCount(pending.d6Roll) + newDelta
+    const triple = isTripleSublimation(dice, pending.d6Roll, newDelta)
     const newChaos = calculateChaos(
       dice,
       pending.unconsumedBurnout,
       pending.d6Roll,
-      pending.d8Roll,
-      newMode,
+      newDelta,
     )
     const isMember = isMissionMember(room, playerId)
     const chaosDiff = isMember ? newChaos - oldChaos : 0
@@ -152,9 +154,10 @@ async function handleD8Mode(
     pending.chaosApplied = isMember ? newChaos : 0
 
     outcome = {
-      oldMode,
-      newMode,
+      oldDelta,
+      newDelta,
       d8Roll: pending.d8Roll!,
+      triple,
       isMember,
       oldSuccesses,
       newSuccesses,
@@ -169,25 +172,39 @@ async function handleD8Mode(
   })
 
   if (!outcome) return
-  const o = outcome as D8ModeOutcome
+  const o = outcome as D8DeltaOutcome
 
   // 同步 web：混沌差值 + 失败差值（仅 mission 成员）
   if (o.isMember) {
     if (o.chaosDiff !== 0) {
-      fireSyncChaos(deps.web, session, o.chaosDiff, `d8 ${labelD8Mode(o.newMode)}`)
+      fireSyncChaos(deps.web, session, o.chaosDiff, `d8 ${labelD8Delta(o.newDelta)}`)
     }
     if (o.failureDelta !== 0) {
       fireSyncFailure(deps.web, session, o.failureDelta)
     }
   }
 
-  await reply(session, deps, renderD8ModeChange(o), [])
+  // 按钮：保留增量调整 + 撤回，方便继续微调
+  const btns: QQButton[][] = []
+  btns.push(
+    d8DeltaOptions(o.d8Roll).map((v) => ({
+      label: v > 0 ? `+${v}个3` : v < 0 ? `−${-v}个3` : '忽略',
+      data: `/d8 ${v}`,
+      primary: o.newDelta === v,
+      type: 'input' as const,
+      enter: true,
+    })),
+  )
+  btns.push([{ label: '撤回', data: '/撤回骰点', type: 'input', enter: true }])
+
+  await reply(session, deps, renderD8DeltaChange(o), btns)
 }
 
-interface D8ModeOutcome {
-  oldMode: D8Mode
-  newMode: D8Mode
+interface D8DeltaOutcome {
+  oldDelta: number
+  newDelta: number
   d8Roll: number
+  triple: boolean
   isMember: boolean
   oldSuccesses: number
   newSuccesses: number
@@ -200,29 +217,32 @@ interface D8ModeOutcome {
   failureCount: number
 }
 
-function labelD8Mode(m: D8Mode): string {
-  if (m === 'count') return '计入'
-  if (m === 'subtract') return '减去'
-  return '忽略'
-}
-
-function renderD8ModeChange(o: D8ModeOutcome): string {
+function renderD8DeltaChange(o: D8DeltaOutcome): string {
   const lines: string[] = []
-  lines.push(`# d8 处理：${labelD8Mode(o.oldMode)} → **${labelD8Mode(o.newMode)}**`)
+  lines.push(`# d8 处理：${labelD8Delta(o.oldDelta)} → **${labelD8Delta(o.newDelta)}**`)
+  if (o.triple) {
+    lines.push('')
+    lines.push(`![三重升华 #500px #126px](${TRIPLE_SUBLIMATION_IMG})`)
+  }
   lines.push('')
-  lines.push(`d8 摇出　**${o.d8Roll}**（等效 ${d8ThreeCount(o.d8Roll)} 个 3）`)
+  lines.push(`d8 摇出　**${o.d8Roll}**（最多 ${d8ThreeCount(o.d8Roll)} 个 3 可调）`)
   lines.push('')
   lines.push(`成功数　**${o.oldSuccesses} → ${o.newSuccesses}**`)
   if (o.isMember) {
     const sign = o.chaosDiff >= 0 ? '+' : ''
-    lines.push(`本次混沌　${o.oldChaos} → **${o.newChaos}**（差值 ${sign}${o.chaosDiff}）`)
+    if (o.triple) {
+      lines.push(`本次混沌　${o.oldChaos} → **0**　★ 三重升华 ★（差值 ${sign}${o.chaosDiff}）`)
+    } else {
+      lines.push(`本次混沌　${o.oldChaos} → **${o.newChaos}**（差值 ${sign}${o.chaosDiff}）`)
+    }
     lines.push(`混沌池　**${o.chaosPool}**`)
     if (o.failureNote) {
       lines.push('')
       lines.push(`> ${o.failureNote}（当前失败计数 ${o.failureCount}）`)
     }
   } else {
-    lines.push('> 观察模式：本次切换不影响混沌池 / 失败计数')
+    if (o.triple) lines.push('> ★ 三重升华 ★（观察模式，不影响混沌池）')
+    else lines.push('> 观察模式：本次切换不影响混沌池 / 失败计数')
   }
   return lines.join('\n')
 }
@@ -358,11 +378,9 @@ async function handle(
     }
 
     const oldDice = pending.currentDice
-    // 总成功数 = d4 + d6 + d8 当前 mode 贡献
+    // 总成功数 = d4 + d6 + d8 当前增量贡献
     const oldSuccesses =
-      countSuccesses(oldDice) +
-      d6ThreeCount(pending.d6Roll) +
-      d8SuccessDelta(pending.d8Roll, pending.d8Mode)
+      countSuccesses(oldDice) + d6ThreeCount(pending.d6Roll) + pending.d8Delta
     const oldChaos = pending.chaosApplied
     const dice = [...oldDice]
 
@@ -390,15 +408,12 @@ async function handle(
 
     // 后修改重算时把 d6 / d8 都带上（自身不在 d4 池里，但贡献的 3 数 / 混沌仍参与判定）
     const newSuccesses =
-      countSuccesses(dice) +
-      d6ThreeCount(pending.d6Roll) +
-      d8SuccessDelta(pending.d8Roll, pending.d8Mode)
+      countSuccesses(dice) + d6ThreeCount(pending.d6Roll) + pending.d8Delta
     const newChaos = calculateChaos(
       dice,
       pending.unconsumedBurnout,
       pending.d6Roll,
-      pending.d8Roll,
-      pending.d8Mode,
+      pending.d8Delta,
     )
     const isMember = isMissionMember(room, playerId)
     // 观察模式：不影响混沌池/失败计数；chaosDiff 仅用于显示

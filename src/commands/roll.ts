@@ -7,7 +7,6 @@ import {
   countSuccesses,
   d6ChaosCount,
   d6ThreeCount,
-  d8SuccessDelta,
   d8ThreeCount,
   d10ChaosCount,
   d10ThreeCount,
@@ -16,7 +15,6 @@ import {
   rollD6,
   rollD8,
   rollD10,
-  type D8Mode,
 } from '../game/dice'
 import { rawRoomIdOf, roomIdOf } from '../room'
 import type { PendingRoll } from '../types'
@@ -98,7 +96,7 @@ export interface RollDeps {
 }
 
 /** 三重升华专属横幅图（横向 banner 版，725x182，~4:1）*/
-const TRIPLE_SUBLIMATION_IMG =
+export const TRIPLE_SUBLIMATION_IMG =
   'https://tr.kaigua.vip/assets/images/triple-sublimation-banner.png'
 
 export function registerRollCommands(ctx: Context, deps: RollDeps): void {
@@ -324,7 +322,7 @@ async function handle(
       trigger === '异常能力' && diceChoice.useD10 ? rollD10() : null
     const d8Roll: number | null =
       trigger === '现实修改' && diceChoice.useD8 ? rollD8() : null
-    const d8Mode: D8Mode = 'ignore' // 初始默认忽略；玩家可后修改 /d8计入 /d8减去
+    const d8Delta = 0 // 初始忽略；玩家用 /d8 N 精确调整（+2/+1/0/-1/-2）
     const useD10 = d10Roll !== null
     const d10Failure = isD10Failure(d10Roll)
 
@@ -353,23 +351,26 @@ async function handle(
       successes = d10Failure ? 0 : d10ThreesAfterBurnout + d6ThreeCount(d6Roll)
       // 混沌：d10 面值 + 燃尽全量 + d6 混沌
       chaosCalc = d10ChaosCount(d10Roll) + burnout + d6ChaosCount(d6Roll)
+      // UNL3ASH 仅属异常能力；d10/d6 都是异常能力路径
       unleash = isUnleashActivated(rawDice, d6Roll, d10Roll)
     } else {
       // ─── 常规模式：6D4 (+ d6, + d8) ───
       rawDice = roll6d4()
-      // d8 初始 d8Mode='ignore'，所以 d8 暂不计入三重升华 / 成功数；玩家后续点按钮才变
-      rawTriple = isTripleSublimation(rawDice, d6Roll, d8Roll, d8Mode)
+      // d8 初始 d8Delta=0，暂不计入三重升华 / 成功数；玩家用 /d8 N 调整后才变
+      rawTriple = isTripleSublimation(rawDice, d6Roll, d8Delta)
       const burned = applyBurnout(rawDice, burnout)
       burnedDice = burned.dice
       unconsumed = burned.unconsumed
       successes =
-        countSuccesses(burned.dice) +
-        d6ThreeCount(d6Roll) +
-        d8SuccessDelta(d8Roll, d8Mode)
+        countSuccesses(burned.dice) + d6ThreeCount(d6Roll) + d8Delta
       chaosCalc = rawTriple
         ? 0
-        : calculateChaos(burned.dice, burned.unconsumed, d6Roll, d8Roll, d8Mode)
-      unleash = isUnleashActivated(rawDice, d6Roll, null, d8Roll, d8Mode)
+        : calculateChaos(burned.dice, burned.unconsumed, d6Roll, d8Delta)
+      // UNL3ASH 只属异常能力：现实修改（d8 路径）一律不激活
+      unleash =
+        trigger === '异常能力'
+          ? isUnleashActivated(rawDice, d6Roll, null)
+          : false
     }
 
     const isMember = isMissionMember(room, playerId)
@@ -399,7 +400,7 @@ async function handle(
       d6Roll,
       d10Roll,
       d8Roll,
-      d8Mode,
+      d8Delta,
     }
     deps.pending.set(roomId, playerId, pendingRoll)
 
@@ -427,7 +428,7 @@ async function handle(
       d10ThreesAfterBurnout,
       d10Failure,
       d8Roll,
-      d8Mode,
+      d8Delta,
       unleash,
     }
   })
@@ -487,9 +488,9 @@ interface RollResult {
   d10Failure: boolean
   /** 赞助骰：null = 未投，1-8 = 本次摇出的 d8 */
   d8Roll: number | null
-  /** 玩家对 d8=3/6 的选择 */
-  d8Mode: D8Mode
-  /** UNL3ASH：恰好 7 个 3（含 d8 当前 mode 贡献），在任何后修改前判定 */
+  /** d8 带符号的 3 数贡献（已 clamp，+2/+1/0/-1/-2） */
+  d8Delta: number
+  /** UNL3ASH：恰好 7 个 3（仅异常能力），在任何后修改前判定 */
   unleash: boolean
 }
 
@@ -589,12 +590,9 @@ function renderRollResult(r: RollResult): string {
       lines.push(`8 面骰　**${r.d8Roll}**`)
       const tribute = D8_TRIBUTES[r.d8Roll]
       if (tribute) lines.push(`> ${tribute}`)
-      // 当前模式状态行
+      // 当前 d8 处理状态行
       if (d8ThreeCount(r.d8Roll) > 0) {
-        const label = r.d8Mode === 'count' ? `计入 +${d8ThreeCount(r.d8Roll)}`
-          : r.d8Mode === 'subtract' ? `减去 −${d8ThreeCount(r.d8Roll)}`
-            : '忽略'
-        lines.push(`> 当前 d8 处理：**${label}**`)
+        lines.push(`> 当前 d8 处理：**${labelD8Delta(r.d8Delta)}**（点下方按钮调整）`)
       }
     }
 
@@ -663,6 +661,22 @@ function renderD6Line(d6: number): string {
   return `6 面骰　**${d6}**（+${d6ChaosCount(d6)} 混沌）`
 }
 
+/** d8 增量的中文标签：+2 → "计入 2 个 3"，-1 → "减去 1 个 3"，0 → "忽略"。 */
+export function labelD8Delta(delta: number): string {
+  if (delta > 0) return `计入 ${delta} 个 3`
+  if (delta < 0) return `减去 ${-delta} 个 3`
+  return '忽略'
+}
+
+/** d8 面值对应的可选增量按钮序列（从大到小）。d8=6 → [2,1,0,-1,-2]；d8=3 → [1,0,-1]。 */
+export function d8DeltaOptions(d8: number | null): number[] {
+  const max = d8ThreeCount(d8)
+  if (max === 0) return []
+  const opts: number[] = []
+  for (let v = max; v >= -max; v--) opts.push(v)
+  return opts
+}
+
 function renderRollButtons(r: RollResult): QQButton[][] {
   // d10 模式没有 d4 池，"增/减成功"按钮不适用，只留撤回 + 再投
   if (r.d10Roll !== null) {
@@ -684,13 +698,18 @@ function renderRollButtons(r: RollResult): QQButton[][] {
     { label: '成功+1', data: '/增加成功 1', primary: true, type: 'input', enter: true },
     { label: '成功-1', data: '/减少成功 1', type: 'input', enter: true },
   ])
-  // d8 = 3 / 6 时，给"计入/减去/忽略"按钮（高亮当前选中项）
+  // d8 = 3 / 6 时，给精确增量按钮（高亮当前选中项）
+  //   d8=3 → [+1] [0] [-1]；d8=6 → [+2] [+1] [0] [-1] [-2]
   if (r.d8Roll !== null && d8ThreeCount(r.d8Roll) > 0) {
-    rows.push([
-      { label: '计入 d8', data: '/d8计入', primary: r.d8Mode === 'count', type: 'input', enter: true },
-      { label: '减去 d8', data: '/d8减去', primary: r.d8Mode === 'subtract', type: 'input', enter: true },
-      { label: '忽略 d8', data: '/d8忽略', primary: r.d8Mode === 'ignore', type: 'input', enter: true },
-    ])
+    rows.push(
+      d8DeltaOptions(r.d8Roll).map((v) => ({
+        label: v > 0 ? `+${v}个3` : v < 0 ? `−${-v}个3` : '忽略',
+        data: `/d8 ${v}`,
+        primary: r.d8Delta === v,
+        type: 'input' as const,
+        enter: true,
+      })),
+    )
   }
   rows.push([
     { label: '撤回', data: '/撤回骰点', type: 'input', enter: true },

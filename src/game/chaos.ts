@@ -14,38 +14,34 @@ import {
   countSuccesses,
   d6ChaosCount,
   d6ThreeCount,
-  d8SuccessDelta,
   d10ThreeCount,
   isD10Failure,
-  type D8Mode,
 } from './dice'
 
 export function isTripleSublimation(
   dice: readonly number[],
   d6: number | null = null,
-  d8: number | null = null,
-  d8Mode: D8Mode = 'ignore',
+  /** d8 带符号的 3 数贡献（已 clamp，可为负）。仅现实修改 + G3 才非 0。 */
+  d8Delta = 0,
 ): boolean {
-  return (
-    countSuccesses(dice) + d6ThreeCount(d6) + d8SuccessDelta(d8, d8Mode) === 3
-  )
+  return countSuccesses(dice) + d6ThreeCount(d6) + d8Delta === 3
 }
 
 export function calculateChaos(
   dice: readonly number[],
   unconsumedBurnout: number,
   d6: number | null = null,
-  d8: number | null = null,
-  d8Mode: D8Mode = 'ignore',
+  d8Delta = 0,
 ): number {
-  if (isTripleSublimation(dice, d6, d8, d8Mode)) return 0
-  // d8 不贡献混沌，仅参与三重升华判定 / 总成功数
+  if (isTripleSublimation(dice, d6, d8Delta)) return 0
+  // d8 不贡献混沌，仅通过凑成三重升华间接把混沌归 0
   return countNonSuccesses(dice) + unconsumedBurnout + d6ChaosCount(d6)
 }
 
 /**
  * UNL3ASH 激活：原始总 3 数（d4 + d6 + d10 贡献）**恰好 == 7**。
  * 需在任何后修改前判定。d10=3 触发的"直接失败"阻断 UNL3ASH。
+ * UNL3ASH 仅属异常能力，与 d8 / 现实修改 无关，故不含 d8 参数。
  *
  * 边界：
  *   - 6 d4-3 + d6=3 = 7 → ✅
@@ -59,15 +55,7 @@ export function isUnleashActivated(
   rawDice: readonly number[],
   d6: number | null = null,
   d10: number | null = null,
-  d8: number | null = null,
-  d8Mode: D8Mode = 'ignore',
 ): boolean {
   if (isD10Failure(d10)) return false
-  return (
-    countSuccesses(rawDice) +
-      d6ThreeCount(d6) +
-      d10ThreeCount(d10) +
-      d8SuccessDelta(d8, d8Mode) ===
-    7
-  )
+  return countSuccesses(rawDice) + d6ThreeCount(d6) + d10ThreeCount(d10) === 7
 }
