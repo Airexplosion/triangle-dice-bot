@@ -375,6 +375,16 @@ async function handle(
     return
   }
 
+  // 检定：d20 不可通过增/减成功调整（规则书明示）
+  if (pending.trigger === '检定') {
+    await reply(
+      session,
+      deps,
+      '> 检定（d20）结果不可用 **增加成功 / 减少成功** 调整。如需撤销请用「撤回骰点」。',
+    )
+    return
+  }
+
   // d10 模式：没有 d4 池可改，按规则 d10 面只能用 QA / 申诫 调整（不走 bot）
   if (pending.d10Roll !== null) {
     await reply(

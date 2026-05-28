@@ -189,11 +189,28 @@ export function registerRollCommands(ctx: Context, deps: RollDeps): void {
     })
 
   // ─── 技能检定（T3 解锁，d20）───
+  // 位置参数顺序：扣费资质 在前、加值资质 在后（与向导选择顺序一致）。
   ctx
-    .command('检定 <addApt:string> <costApt:string>', 'T3 技能：d20 检定（/检定 加值资质 扣费资质）')
-    .action(async ({ session }, addApt, costApt) =>
-      handleCheck(ctx, deps, session, addApt, costApt),
+    .command('检定 [costApt:string] [addApt:string]', 'T3 技能：d20 检定（/检定 扣费资质 加值资质）')
+    .action(async ({ session }, costApt, addApt) =>
+      handleCheck(ctx, deps, session, costApt, addApt),
     )
+}
+
+/** 检定向导用的 3x3 资质九宫格；每个按钮 data = `${prefix}${资质}`（input+enter）。 */
+function buildCheckGrid(prefix: string): QQButton[][] {
+  const rows: QQButton[][] = []
+  for (let i = 0; i < APTITUDE_NAMES.length; i += 3) {
+    rows.push(
+      APTITUDE_NAMES.slice(i, i + 3).map((name) => ({
+        label: name,
+        data: `${prefix}${name}`,
+        type: 'input' as const,
+        enter: true,
+      })),
+    )
+  }
+  return rows
 }
 
 /**
@@ -210,8 +227,8 @@ async function handleCheck(
   ctx: Context,
   deps: RollDeps,
   session: import('koishi').Session | undefined,
-  addApt: string | undefined,
   costApt: string | undefined,
+  addApt: string | undefined,
 ): Promise<void> {
   if (!session) return
   if (session.isDirect) {
@@ -229,27 +246,33 @@ async function handleCheck(
     return
   }
 
+  // ── 向导步骤 1：未给扣费资质 → 选扣费资质 ──
+  if (!costApt || !APTITUDE_SET.has(costApt)) {
+    await reply(
+      session,
+      deps,
+      [
+        '# 检定 · 第 1 步',
+        '',
+        '请选择**扣费资质**（从中扣 1 点 QA 作为代价）：',
+      ].join('\n'),
+      buildCheckGrid('/检定 '),
+    )
+    return
+  }
+  // ── 向导步骤 2：有扣费资质、未给加值资质 → 选加值资质 ──
   if (!addApt || !APTITUDE_SET.has(addApt)) {
     await reply(
       session,
       deps,
       [
-        '**用法**　检定 <加值资质> <扣费资质>',
+        '# 检定 · 第 2 步',
         '',
-        '加值资质：把它当前 QA 加到 d20 上',
-        '扣费资质：从它扣 1 点 QA 作为代价',
+        `扣费资质：**${costApt}**（将扣 1 点 QA）`,
         '',
-        '九种资质：' + APTITUDE_NAMES.join(' '),
-        '例：检定 专注 气场',
+        '请选择**加值资质**（把它当前 QA 加到 d20 上）：',
       ].join('\n'),
-    )
-    return
-  }
-  if (!costApt || !APTITUDE_SET.has(costApt)) {
-    await reply(
-      session,
-      deps,
-      `> 请指定**扣费资质**（从中扣 1 点 QA）。\n> 例：检定 ${addApt} 气场`,
+      buildCheckGrid(`/检定 ${costApt} `),
     )
     return
   }
@@ -347,6 +370,29 @@ async function handleCheck(
     return
   }
 
+  // 建 pending 以支持「撤回骰点」：退混沌 + 退还消耗的 QA（扣费 1 + d20=7 清零量）
+  const consumed: Record<string, number> = {}
+  consumed[r.costApt!] = (consumed[r.costApt!] ?? 0) + 1
+  if (r.loseAllQa! > 0) {
+    consumed[r.addApt!] = (consumed[r.addApt!] ?? 0) + r.loseAllQa!
+  }
+  deps.pending.set(roomId, playerId, {
+    playerId,
+    trigger: '检定',
+    aptitudeName: r.addApt!,
+    currentDice: [],
+    rawThreeCount: 0,
+    chaosApplied: r.chaosApplied!,
+    failureIncremented: false,
+    unconsumedBurnout: 0,
+    createdAt: Date.now(),
+    consumedAptitudes: consumed,
+    d6Roll: null,
+    d10Roll: null,
+    d8Roll: null,
+    d8Delta: 0,
+  })
+
   // web 同步：QA 消耗（扣费 1 + d20=7 清零）+ 混沌
   fireConsumeAptitude(deps.web, session, r.costApt!, 1)
   if (r.loseAllQa! > 0) {
@@ -359,9 +405,10 @@ async function handleCheck(
 
   await reply(session, deps, renderCheck(r), [
     [
+      { label: '撤回', data: '/撤回骰点', type: 'input', enter: true },
       {
-        label: `再检定 ${r.addApt}`,
-        data: `/检定 ${r.addApt} ${r.costApt}`,
+        label: `再检定`,
+        data: `/检定 ${r.costApt} ${r.addApt}`,
         type: 'input',
         enter: true,
       },
