@@ -266,8 +266,8 @@ async function showAnomalyList(
     nav.push({ label: '下一页', data: `/异常能力 __LIST__ ${cur + 1}`, primary: true, type: 'input', enter: true })
   }
   if (nav.length) rows.push(nav)
-  // 常规异常（九宫格）入口
-  rows.push([{ label: '常规异常', data: '/异常能力 __GRID__', type: 'input', enter: true }])
+  // 显示资质（九宫格）入口
+  rows.push([{ label: '显示资质', data: '/异常能力 __GRID__', type: 'input', enter: true }])
 
   await reply(session, deps, lines.join('\n'), rows)
   return 'shown'
