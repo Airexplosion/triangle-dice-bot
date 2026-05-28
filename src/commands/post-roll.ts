@@ -1,4 +1,5 @@
 import type { Context } from 'koishi'
+import { APTITUDE_NAMES, APTITUDE_SET } from '../const'
 import { calculateChaos, isTripleSublimation } from '../game/chaos'
 import {
   clampD8Delta,
@@ -89,11 +90,11 @@ export function registerPostRollCommands(ctx: Context, deps: PostRollDeps): void
     .action(async ({ session }, dir, cost) =>
       handleDieAdjust(deps, session, 'd10', dir, cost),
     )
-  // ─── d6 调整（设任意点数，花 1 QA 或 3 申诫；向导）───
+  // ─── d6 调整（设任意点数，花 1 QA / 1 任意资质 / 3 申诫；向导）───
   ctx
-    .command('d6调 [val:string] [cost:string]', '骰后：花 1 QA 或 3 申诫把 d6 设成任意点数')
-    .action(async ({ session }, val, cost) =>
-      handleDieAdjust(deps, session, 'd6', val, cost),
+    .command('d6调 [val:string] [cost:string] [anyApt:string]', '骰后：花 1 QA 或 3 申诫把 d6 设成任意点数')
+    .action(async ({ session }, val, cost, anyApt) =>
+      handleDieAdjust(deps, session, 'd6', val, cost, anyApt),
     )
 }
 
@@ -119,7 +120,11 @@ function recomputeAnomaly(
   return { success, chaos }
 }
 
-const COST_LABEL: Record<string, string> = { qa: '1 资质 QA', 申诫: '3 申诫' }
+const COST_LABEL: Record<string, string> = {
+  qa: '1 资质 QA',
+  anyqa: '1 任意资质 QA',
+  申诫: '3 申诫',
+}
 
 /**
  * d6/d10 调整向导 + 执行。
@@ -134,6 +139,7 @@ async function handleDieAdjust(
   kind: 'd10' | 'd6',
   arg1: string | undefined,
   arg2: string | undefined,
+  arg3?: string | undefined,
 ): Promise<void> {
   if (!session) return
   if (session.isDirect) return reply(session, deps, '> 私聊不支持骰点命令。')
@@ -220,9 +226,19 @@ async function handleDieAdjust(
   }
 
   // ── 向导步骤 2：选支付方式 ──
+  //   qa    = 扣该次骰点相关资质（开发者点 4 默认）
+  //   anyqa = 扣自选资质 1 点（仅 d6，需 arg3 指定资质）
+  //   申诫  = 扣 3 申诫
   const cost = arg2
-  if (cost !== 'qa' && cost !== '申诫') {
+  if (cost !== 'qa' && cost !== '申诫' && cost !== 'anyqa') {
     const base = kind === 'd10' ? `/d10调 ${arg1}` : `/d6调 ${target}`
+    const row1: QQButton[] = [
+      { label: '用 1 资质 QA', data: `${base} qa`, primary: true, type: 'input', enter: true },
+    ]
+    // 「用 1 任意资质」仅 d6 支持（d6调 命令带第三参；d10调 不带）
+    if (kind === 'd6') {
+      row1.push({ label: '用 1 任意资质', data: `${base} anyqa`, type: 'input', enter: true })
+    }
     await reply(
       session,
       deps,
@@ -232,14 +248,37 @@ async function handleDieAdjust(
         `加值资质：**${pending.aptitudeName}**`,
         '选择支付方式：',
       ].join('\n'),
-      [
-        [
-          { label: '用 1 资质 QA', data: `${base} qa`, primary: true, type: 'input', enter: true },
-          { label: '用 3 申诫', data: `${base} 申诫`, type: 'input', enter: true },
-        ],
-      ],
+      [row1, [{ label: '用 3 申诫', data: `${base} 申诫`, type: 'input', enter: true }]],
     )
     return
+  }
+
+  // ── anyqa：未给资质 → 弹九宫格选要消耗的资质 ──
+  let payApt = pending.aptitudeName // qa 默认相关资质
+  if (cost === 'anyqa') {
+    const chosen = arg3
+    if (!chosen || !APTITUDE_SET.has(chosen)) {
+      const base = `/d6调 ${target} anyqa`
+      const grid: QQButton[][] = []
+      for (let i = 0; i < APTITUDE_NAMES.length; i += 3) {
+        grid.push(
+          APTITUDE_NAMES.slice(i, i + 3).map((name) => ({
+            label: name,
+            data: `${base} ${name}`,
+            type: 'input' as const,
+            enter: true,
+          })),
+        )
+      }
+      await reply(
+        session,
+        deps,
+        [`# d6 → ${target}`, '', '选择要消耗 1 点 QA 的资质：'].join('\n'),
+        grid,
+      )
+      return
+    }
+    payApt = chosen
   }
 
   // ── 申诫支付：先 await 扣减（校验余额）──
@@ -257,16 +296,15 @@ async function handleDieAdjust(
 
   await deps.rooms.update(roomId, session.platform, rawRoomId, (room) => {
     const player = getOrCreatePlayer(room, playerId)
-    // QA 支付：扣该次骰点资质 1 点（开发者点 4：必须相关资质）
-    if (cost === 'qa') {
-      const apt = pending.aptitudeName
-      const curQa = player.aptitudes[apt] ?? 0
+    // QA 支付（qa = 相关资质；anyqa = 自选资质）
+    if (cost === 'qa' || cost === 'anyqa') {
+      const curQa = player.aptitudes[payApt] ?? 0
       if (curQa < 1) {
-        outcome = `> 资质 **${apt}** QA 不足（当前 ${curQa}，需要 1）。`
+        outcome = `> 资质 **${payApt}** QA 不足（当前 ${curQa}，需要 1）。`
         return
       }
-      player.aptitudes[apt] = curQa - 1
-      pending.consumedAptitudes[apt] = (pending.consumedAptitudes[apt] ?? 0) + 1
+      player.aptitudes[payApt] = curQa - 1
+      pending.consumedAptitudes[payApt] = (pending.consumedAptitudes[payApt] ?? 0) + 1
     } else {
       pending.consumedReprimands += 3
     }
@@ -286,14 +324,14 @@ async function handleDieAdjust(
       kind,
       oldVal,
       newVal: target!,
-      cost: cost as 'qa' | '申诫',
+      cost,
       success,
       chaos,
       chaosDiff,
       chaosPool: room.chaosPool,
       isMember,
-      aptName: pending.aptitudeName,
-      aptAfter: player.aptitudes[pending.aptitudeName] ?? 0,
+      aptName: payApt,
+      aptAfter: player.aptitudes[payApt] ?? 0,
     }
   })
 
@@ -328,7 +366,7 @@ interface DieAdjustOutcome {
   kind: 'd10' | 'd6'
   oldVal: number
   newVal: number
-  cost: 'qa' | '申诫'
+  cost: 'qa' | 'anyqa' | '申诫'
   success: number
   chaos: number
   chaosDiff: number
@@ -344,7 +382,7 @@ function renderDieAdjust(o: DieAdjustOutcome): string {
   lines.push(`# 调整 ${die}：${o.oldVal} → **${o.newVal}**`)
   lines.push('')
   lines.push(`支付　**${COST_LABEL[o.cost]}**`)
-  if (o.cost === 'qa') {
+  if (o.cost === 'qa' || o.cost === 'anyqa') {
     lines.push(`资质 **${o.aptName}** 当前 **${o.aptAfter}**`)
   }
   lines.push('')
