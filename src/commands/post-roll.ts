@@ -152,8 +152,9 @@ async function handleDieAdjust(
   if (kind === 'd6' && pending.d6Roll === null) {
     return reply(session, deps, '> 本次骰点未使用 d6。')
   }
-  if (kind === 'd10' && pending.d10Roll === 3) {
-    return reply(session, deps, '> d10 = 3 为强制失败，规则上不可调整。')
+  // 仅「掷出」的 3 锁定不可调整；调整出来的 3（如 4→3）仍可继续调（开发者点 3）
+  if (kind === 'd10' && pending.d10Original === 3) {
+    return reply(session, deps, '> d10 掷出的 3 为强制失败，规则上不可调整。')
   }
 
   // ── 解析 target ──
@@ -306,8 +307,9 @@ async function handleDieAdjust(
   }
 
   // 调整后保留入口按钮，便于继续调整 d10 / 撤回
+  // 只要原始掷骰不是 3，就可以继续调（哪怕当前被调成了 3）
   const btns: QQButton[][] = []
-  if (o.kind === 'd10' && o.newVal !== 3) {
+  if (o.kind === 'd10' && pending.d10Original !== 3) {
     btns.push([{ label: '继续调 d10', data: '/d10调', type: 'input', enter: true }])
   }
   if (pending.d6Roll !== null && o.kind === 'd6') {

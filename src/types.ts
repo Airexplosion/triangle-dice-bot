@@ -65,6 +65,12 @@ export interface PendingRoll {
    */
   d10Roll: number | null
   /**
+   * d10 的**原始掷骰值**（不随调整改变）。
+   * 仅当原始掷出 3 时锁定（开发者点 3：掷出的 3 永远失败、不可调整）；
+   * 调整出来的 3（如 4→3）不锁，仍可继续调。null = 未用 d10。
+   */
+  d10Original: number | null
+  /**
    * G3 解锁后的 d8（赞助骰）。
    * null = 未使用；1-8 = 摇出的 d8 面值。仅 现实修改 用到。
    */
