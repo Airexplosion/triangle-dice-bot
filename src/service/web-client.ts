@@ -286,6 +286,39 @@ export class WebClient {
   ): Promise<CharacterHighWallsResp | null> {
     return this.getJson('/api/bot/character-high-walls', { qqOpenid, qqGroupOpenid })
   }
+
+  // ─── 超管审核（经理 / 分部）────────────────────────────────────
+  // Bot-Key 鉴权；命令层负责"特定群 + 特定人"白名单门控。
+
+  /** 最近待审核的经理申请清单。 */
+  listManagerApplications(): Promise<ManagerAppsResp | null> {
+    return this.getJson('/api/bot/admin/manager-applications')
+  }
+
+  /** 审核经理申请（reviewer = 触发者短码，写入 review_note）。 */
+  reviewManagerApplication(
+    appId: number,
+    action: 'approve' | 'reject',
+    reviewer: string,
+    note?: string,
+  ): Promise<AdminReviewResp | null> {
+    return this.postJson('/api/bot/admin/manager-review', { appId, action, reviewer, note })
+  }
+
+  /** 最近待审核的分部创建申请清单。 */
+  listBranchApplications(): Promise<BranchAppsResp | null> {
+    return this.getJson('/api/bot/admin/branch-applications')
+  }
+
+  /** 审核分部创建申请（reviewer = 触发者短码，写入 review_note）。 */
+  reviewBranchApplication(
+    appId: number,
+    action: 'approve' | 'reject',
+    reviewer: string,
+    note?: string,
+  ): Promise<AdminReviewResp | null> {
+    return this.postJson('/api/bot/admin/branch-review', { appId, action, reviewer, note })
+  }
 }
 
 // ─── Internal helpers ────────────────────────────────────────────
@@ -533,4 +566,43 @@ export interface CharacterHighWallsResp {
   error?: string
   /** 角色卡已归档（机器人不可操作）。 */
   archived?: boolean
+}
+
+// ─── 超管审核 ────────────────────────────────────────────────────
+
+export interface ManagerApplication {
+  id: number
+  reason: string | null
+  created_at: number
+  username: string
+  name: string | null
+  char_count: number
+}
+
+export interface BranchApplication {
+  id: number
+  branch_name: string
+  branch_description: string | null
+  reason: string | null
+  created_at: number
+  username: string
+  name: string | null
+}
+
+export interface ManagerAppsResp {
+  success: boolean
+  applications?: ManagerApplication[]
+  error?: string
+}
+
+export interface BranchAppsResp {
+  success: boolean
+  applications?: BranchApplication[]
+  error?: string
+}
+
+export interface AdminReviewResp {
+  success: boolean
+  message?: string
+  error?: string
 }

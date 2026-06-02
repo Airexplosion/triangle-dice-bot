@@ -23,6 +23,8 @@ export interface Config {
   webApiBase: string
   webApiKey: string
   useMarkdown: boolean
+  auditGroupIds: string[]
+  auditUserIds: string[]
 }
 
 export const Config: Schema<Config> = Schema.object({
@@ -36,6 +38,12 @@ export const Config: Schema<Config> = Schema.object({
   useMarkdown: Schema.boolean()
     .description('在 QQ 适配器下用原生 Markdown 渲染回复（私域机器人 + 已开通 markdown 权限）。关闭则全部走纯文本。')
     .default(true),
+  auditGroupIds: Schema.array(Schema.string())
+    .description('审核白名单：允许使用 /经理审核 /分部审核 的群 openid 列表（用 /info 查询）。')
+    .default([]),
+  auditUserIds: Schema.array(Schema.string())
+    .description('审核白名单：允许使用 /经理审核 /分部审核 的用户 openid 列表（用 /info 查询）。需同时在白名单群内。')
+    .default([]),
 })
 
 export function apply(ctx: Context, config: Config): void {
@@ -62,6 +70,8 @@ export function apply(ctx: Context, config: Config): void {
     pendingAdmin,
     web,
     useMarkdown: config.useMarkdown,
+    auditGroupIds: config.auditGroupIds,
+    auditUserIds: config.auditUserIds,
   })
 
   // ─────────────────────────────────────────────────────────────────────

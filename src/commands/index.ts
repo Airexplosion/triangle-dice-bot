@@ -6,6 +6,7 @@ import type { WebClient } from '../service/web-client'
 import { sendQQMarkdown, type QQButton } from '../util/qq-markdown'
 import { registerAdminCommands } from './admin'
 import { registerAptitudeCommand } from './aptitude'
+import { registerAuditCommands } from './audit'
 import { registerBindCommands } from './bind'
 import { registerMigrateCommand } from './migrate'
 import { registerMissionCommands } from './mission'
@@ -21,6 +22,10 @@ export interface CommandDeps {
   web: WebClient | null
   /** 是否在 QQ 适配器下走原生 markdown 路径（依赖私域 + 已开通 markdown 权限） */
   useMarkdown: boolean
+  /** 审核白名单：允许 /经理审核 /分部审核 的群 openid。 */
+  auditGroupIds: string[]
+  /** 审核白名单：允许 /经理审核 /分部审核 的用户 openid。 */
+  auditUserIds: string[]
 }
 
 /** P2/P3/P4 待实现的占位 reply（markdown）。*/
@@ -42,6 +47,7 @@ const OUR_COMMAND_NAMES: ReadonlySet<string> = new Set([
   '绑定', '解绑', '查询绑定', '查询状态', '查询嘉奖', '查询物品', '查询角色', '切换角色',
   '查看任务', '开始任务', '结束任务', '解绑任务',
   '查看报告', '通过报告', '申诉报告',
+  'info', '经理审核', '分部审核',
   'triangle-migrate-json',
 ])
 
@@ -159,6 +165,14 @@ export function registerCommands(ctx: Context, deps: CommandDeps): void {
     useMarkdown: deps.useMarkdown,
   })
   registerReportCommands(ctx, { web: deps.web, useMarkdown: deps.useMarkdown })
+
+  // ========== 超管审核（/info /经理审核 /分部审核）==========
+  registerAuditCommands(ctx, {
+    web: deps.web,
+    useMarkdown: deps.useMarkdown,
+    auditGroupIds: deps.auditGroupIds,
+    auditUserIds: deps.auditUserIds,
+  })
 
   // ========== 维护命令：JSON → DB 一次性迁移 ==========
   registerMigrateCommand(ctx, deps)
