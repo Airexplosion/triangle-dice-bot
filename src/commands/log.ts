@@ -283,10 +283,20 @@ function isLogCommand(content: string | undefined): boolean {
 }
 
 /** 把 session.content 清成可读纯文本：图片→[图片]，去掉其它 element 标签。 */
+function decodeEntities(s: string): string {
+  return s
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#0?39;/g, "'")
+    .replace(/&#x2[Ff];/g, '/')
+    .replace(/&amp;/g, '&') // 必须最后解码，否则 &amp;lt; 会被二次解码
+}
+
 function cleanContent(content: string): string {
   return content
-    // 保留图片 URL，染色页/导出可还原；src 优先，其次 url
-    .replace(/<img\b[^>]*?\b(?:src|url)="([^"]*)"[^>]*>/gi, '[[img:$1]]')
+    // 保留图片 URL（解码 &amp; 等实体，否则 URL 参数损坏导致拉取失败）
+    .replace(/<img\b[^>]*?\b(?:src|url)="([^"]*)"[^>]*>/gi, (_m, u) => `[[img:${decodeEntities(u)}]]`)
     .replace(/<img[^>]*\/?>/gi, '[图片]')
     .replace(/<audio[^>]*\/?>/gi, '[语音]')
     .replace(/<video[^>]*\/?>/gi, '[视频]')
