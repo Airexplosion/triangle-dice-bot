@@ -48,8 +48,10 @@ export function registerLogCommands(ctx: Context, deps: LogDeps): void {
     try {
       const roomId = roomIdOf(session)
       if (roomId && store.recordingLogId(roomId) !== undefined && !isLogCommand(session.content)) {
-        const text = cleanContent(session.content ?? '')
+        let text = cleanContent(session.content ?? '')
         if (text) {
+          // 趁 QQ 图片 rkey 还新鲜，立刻把图片转存到 COS（否则导出/查看时已失效）
+          if (deps.web && text.includes('[[img:')) text = await rehostImages(deps, text)
           await store.appendLine({
             logId: store.recordingLogId(roomId)!,
             time: new Date(),
@@ -254,6 +256,24 @@ function statusLabel(s: string): string {
 }
 
 // ─── 工具 ─────────────────────────────────────────────────────────
+
+/** 把文本里的 QQ 图片 URL 逐个转存到 COS，替换成永久链接（失败保留原 URL）。 */
+async function rehostImages(deps: LogDeps, text: string): Promise<string> {
+  const urls = new Set<string>()
+  const re = /\[\[img:(.*?)\]\]/g
+  let m: RegExpExecArray | null
+  while ((m = re.exec(text)) !== null) urls.add(m[1])
+  for (const u of urls) {
+    if (!u || u.startsWith('/') || /myqcloud\.com/.test(u)) continue // 已是本地/COS，跳过
+    try {
+      const r = await deps.web!.fetchLogImage(u)
+      if (r?.success && r.localUrl) text = text.split(`[[img:${u}]]`).join(`[[img:${r.localUrl}]]`)
+    } catch {
+      /* 转存失败保留原 URL */
+    }
+  }
+  return text
+}
 
 /** 是否是 /log 管理命令本身（避免把命令记进日志）。 */
 function isLogCommand(content: string | undefined): boolean {

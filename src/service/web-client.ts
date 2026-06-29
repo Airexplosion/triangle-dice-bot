@@ -322,6 +322,11 @@ export class WebClient {
 
   // ─── 跑团日志染色页上传 ──────────────────────────────────────────
 
+  /** 把一张 QQ 图片转存到 COS（趁 rkey 新鲜），返回永久链接；失败 success:false。 */
+  fetchLogImage(url: string): Promise<{ success: boolean; localUrl?: string } | null> {
+    return this.postJson('/api/bot/log/fetch-image', { url })
+  }
+
   /** 上传一份日志到网页染色页，返回公开链接。token 给定则覆盖更新。 */
   uploadLog(payload: {
     token?: string
