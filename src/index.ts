@@ -1,5 +1,6 @@
 import { Context, Schema } from 'koishi'
 import { registerCommands } from './commands'
+import { defineLogModel, LogStore } from './service/log-store'
 import { PendingAdminApplications, PendingRollStore } from './service/pending'
 import { defineModel, RoomStore } from './service/store'
 import { WebClient } from './service/web-client'
@@ -48,10 +49,12 @@ export const Config: Schema<Config> = Schema.object({
 
 export function apply(ctx: Context, config: Config): void {
   defineModel(ctx)
+  defineLogModel(ctx)
 
   const rooms = new RoomStore(ctx)
   const pending = new PendingRollStore()
   const pendingAdmin = new PendingAdminApplications()
+  const logs = new LogStore(ctx)
 
   const web =
     config.webApiBase && config.webApiKey
@@ -68,6 +71,7 @@ export function apply(ctx: Context, config: Config): void {
     rooms,
     pending,
     pendingAdmin,
+    logs,
     web,
     useMarkdown: config.useMarkdown,
     auditGroupIds: config.auditGroupIds,

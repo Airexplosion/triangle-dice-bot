@@ -1,6 +1,16 @@
 import type { Session } from 'koishi'
 
 /**
+ * 机器人发言钩子：跑团日志用。每次 sendQQMarkdown 发出内容时回调一次，
+ * 让 LogService 在该房间正在录制时把机器人回复（含骰点结果）记进日志。
+ * best-effort：钩子内部异常不影响发送。注册见 commands/log.ts。
+ */
+let botMessageHook: ((session: Session, content: string) => void) | null = null
+export function setBotMessageHook(fn: ((session: Session, content: string) => void) | null): void {
+  botMessageHook = fn
+}
+
+/**
  * 一个按钮。type=command 表示点击后自动以点击者身份发送 data 文本（被机器人接住），
  * type=link 表示点击跳转 URL。
  */
@@ -105,6 +115,15 @@ export async function sendQQMarkdown(
       : optionsOrEnabled
   const enabled = options.enabled ?? true
   if (!content) return
+
+  // 跑团日志：把机器人这条回复交给日志钩子（其内部自行判断房间是否在录制）。
+  if (botMessageHook) {
+    try {
+      botMessageHook(session, content)
+    } catch {
+      /* 日志记录不可影响正常发送 */
+    }
+  }
 
   // 自动在 reply 顶部加触发者短码（多人使用时区分谁发的）。
   // 私聊不加；其它场景一律加。命令层不需要管这事。

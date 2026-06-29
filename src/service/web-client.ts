@@ -319,6 +319,18 @@ export class WebClient {
   ): Promise<AdminReviewResp | null> {
     return this.postJson('/api/bot/admin/branch-review', { appId, action, reviewer, note })
   }
+
+  // ─── 跑团日志染色页上传 ──────────────────────────────────────────
+
+  /** 上传一份日志到网页染色页，返回公开链接。token 给定则覆盖更新。 */
+  uploadLog(payload: {
+    token?: string
+    groupId: string
+    name: string
+    lines: Array<{ t: number; who: string; sid: string; kind: string; text: string }>
+  }): Promise<LogUploadResp | null> {
+    return this.postJson('/api/bot/log/upload', payload)
+  }
 }
 
 // ─── Internal helpers ────────────────────────────────────────────
@@ -604,5 +616,13 @@ export interface BranchAppsResp {
 export interface AdminReviewResp {
   success: boolean
   message?: string
+  error?: string
+}
+
+export interface LogUploadResp {
+  success: boolean
+  /** 公开染色页完整链接。 */
+  url?: string
+  token?: string
   error?: string
 }

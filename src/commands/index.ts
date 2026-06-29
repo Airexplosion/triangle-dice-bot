@@ -1,5 +1,6 @@
 import type { Argv, Context } from 'koishi'
 import { HELP_CHECK_SECTION, HELP_PAGES } from '../const'
+import type { LogStore } from '../service/log-store'
 import type { PendingAdminApplications, PendingRollStore } from '../service/pending'
 import type { RoomStore } from '../service/store'
 import type { WebClient } from '../service/web-client'
@@ -7,6 +8,7 @@ import { sendQQMarkdown, type QQButton } from '../util/qq-markdown'
 import { registerAdminCommands } from './admin'
 import { registerAptitudeCommand } from './aptitude'
 import { registerAuditCommands } from './audit'
+import { registerLogCommands } from './log'
 import { registerBindCommands } from './bind'
 import { registerMigrateCommand } from './migrate'
 import { registerMissionCommands } from './mission'
@@ -19,6 +21,7 @@ export interface CommandDeps {
   rooms: RoomStore
   pending: PendingRollStore
   pendingAdmin: PendingAdminApplications
+  logs: LogStore
   web: WebClient | null
   /** 是否在 QQ 适配器下走原生 markdown 路径（依赖私域 + 已开通 markdown 权限） */
   useMarkdown: boolean
@@ -48,6 +51,7 @@ const OUR_COMMAND_NAMES: ReadonlySet<string> = new Set([
   '查看任务', '开始任务', '结束任务', '解绑任务',
   '查看报告', '通过报告', '申诉报告',
   'info', '经理审核', '分部审核',
+  'log', '日志',
   'triangle-migrate-json',
 ])
 
@@ -172,6 +176,13 @@ export function registerCommands(ctx: Context, deps: CommandDeps): void {
     useMarkdown: deps.useMarkdown,
     auditGroupIds: deps.auditGroupIds,
     auditUserIds: deps.auditUserIds,
+  })
+
+  // ========== 跑团日志（/log）==========
+  registerLogCommands(ctx, {
+    store: deps.logs,
+    web: deps.web,
+    useMarkdown: deps.useMarkdown,
   })
 
   // ========== 维护命令：JSON → DB 一次性迁移 ==========
