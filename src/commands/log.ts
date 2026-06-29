@@ -265,6 +265,8 @@ function isLogCommand(content: string | undefined): boolean {
 /** 把 session.content 清成可读纯文本：图片→[图片]，去掉其它 element 标签。 */
 function cleanContent(content: string): string {
   return content
+    // 保留图片 URL，染色页/导出可还原；src 优先，其次 url
+    .replace(/<img\b[^>]*?\b(?:src|url)="([^"]*)"[^>]*>/gi, '[[img:$1]]')
     .replace(/<img[^>]*\/?>/gi, '[图片]')
     .replace(/<audio[^>]*\/?>/gi, '[语音]')
     .replace(/<video[^>]*\/?>/gi, '[视频]')
