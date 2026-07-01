@@ -28,6 +28,7 @@ import { isMissionMember } from '../util/mission'
 import { sendQQMarkdown, type QQButton } from '../util/qq-markdown'
 import {
   d8DeltaButtonRows,
+  d8DeltaCommandToken,
   d8DeltaOptions,
   formatDice,
   labelD8Delta,
@@ -79,9 +80,9 @@ export function registerPostRollCommands(ctx: Context, deps: PostRollDeps): void
     .command('撤回骰点', '撤销本次骰点的混沌 / 失败计数 / 资质消耗')
     .action(async ({ session }) => handleUndo(deps, session))
 
-  // ─── d8 (赞助骰) 精确增量：/d8 <delta>（+2/+1/0/-1/-2，自动 clamp）───
+  // ─── d8 (赞助骰) 精确增量：/d8 <delta>（加2/加1/忽略/减1/减2，自动 clamp）───
   ctx
-    .command('d8 <delta:string>', '骰后：设置 d8 的 3 数增量（如 /d8 1、/d8 -2）')
+    .command('d8 <delta:string>', '骰后：设置 d8 的 3 数增量（如 /d8 加1、/d8 减2）')
     .action(async ({ session }, delta) => handleD8Delta(deps, session, delta))
 
   // ─── d10 调整（±1，花 1 QA 或 3 申诫；向导）───
@@ -188,12 +189,12 @@ async function handleDieAdjust(
         ].join('\n'),
         [
           [
-            { label: '资质 +1', data: '/d10调 加 qa', primary: true, type: 'input', enter: true },
-            { label: '资质 −1', data: '/d10调 减 qa', primary: true, type: 'input', enter: true },
+            { label: '+1（耗1资质）', data: '/d10调 加 qa', primary: true, type: 'input', enter: true },
+            { label: '−1（耗1资质）', data: '/d10调 减 qa', type: 'input', enter: true },
           ],
           [
-            { label: '申诫 +1', data: '/d10调 加 申诫', type: 'input', enter: true },
-            { label: '申诫 −1', data: '/d10调 减 申诫', type: 'input', enter: true },
+            { label: '+1（耗3申诫）', data: '/d10调 加 申诫', type: 'input', enter: true },
+            { label: '−1（耗3申诫）', data: '/d10调 减 申诫', type: 'input', enter: true },
           ],
         ],
       )
@@ -233,11 +234,11 @@ async function handleDieAdjust(
   if (cost !== 'qa' && cost !== '申诫' && cost !== 'anyqa') {
     const base = kind === 'd10' ? `/d10调 ${arg1}` : `/d6调 ${target}`
     const row1: QQButton[] = [
-      { label: '用 1 资质', data: `${base} qa`, primary: true, type: 'input', enter: true },
+      { label: '耗 1 本项资质', data: `${base} qa`, primary: true, type: 'input', enter: true },
     ]
     // 「用 1 任意资质」仅 d6 支持（d6调 命令带第三参；d10调 不带）
     if (kind === 'd6') {
-      row1.push({ label: '用 1 任意资质', data: `${base} anyqa`, type: 'input', enter: true })
+      row1.push({ label: '耗 1 任意资质', data: `${base} anyqa`, type: 'input', enter: true })
     }
     await reply(
       session,
@@ -248,7 +249,13 @@ async function handleDieAdjust(
         `加值资质：**${pending.aptitudeName}**`,
         '选择支付方式：',
       ].join('\n'),
-      [row1, [{ label: '用 3 申诫', data: `${base} 申诫`, type: 'input', enter: true }]],
+      [
+        row1,
+        [
+          { label: '耗 3 申诫', data: `${base} 申诫`, type: 'input', enter: true },
+          { label: kind === 'd10' ? '重选方向' : '重选点数', data: kind === 'd10' ? '/d10调' : '/d6调', type: 'input', enter: true },
+        ],
+      ],
     )
     return
   }
@@ -350,14 +357,14 @@ async function handleDieAdjust(
 
   // 调整后保留入口按钮，便于继续调整 d10 / 撤回
   // 只要原始掷骰不是 3，就可以继续调（哪怕当前被调成了 3）
-  const btns: QQButton[][] = []
+  const btns: QQButton[][] = [rerollRow(pending)]
   if (o.kind === 'd10' && pending.d10Original !== 3) {
-    btns.push([{ label: '继续调 d10', data: '/d10调', type: 'input', enter: true }])
+    btns.push([{ label: '继续调整 d10', data: '/d10调', type: 'input', enter: true }])
   }
   if (pending.d6Roll !== null && o.kind === 'd6') {
-    btns.push([{ label: '继续调 d6', data: '/d6调', type: 'input', enter: true }])
+    btns.push([{ label: '继续调整 d6', data: '/d6调', type: 'input', enter: true }])
   }
-  btns.push([{ label: '撤回', data: '/撤回骰点', type: 'input', enter: true }])
+  btns.push([{ label: '撤回本次骰点', data: '/撤回骰点', type: 'input', enter: true }])
 
   await reply(session, deps, renderDieAdjust(o), btns)
 }
@@ -431,10 +438,10 @@ async function handleD8Delta(
     )
   }
 
-  const requested = Number.parseInt((deltaArg ?? '').trim(), 10)
-  if (Number.isNaN(requested)) {
-    const opts = d8DeltaOptions(pending.d8Roll).map((v) => `/d8 ${v}`).join('　')
-    return reply(session, deps, `> 用法：\`/d8 <增量>\`\n> 可选：${opts}`)
+  const requested = parseD8DeltaArg(deltaArg)
+  if (requested === null) {
+    const opts = d8DeltaOptions(pending.d8Roll).map((v) => `/d8 ${d8DeltaCommandToken(v)}`).join('　')
+    return reply(session, deps, `> 用法：\`/d8 加N/减N/忽略\`\n> 可选：${opts}`)
   }
   const newDelta = clampD8Delta(pending.d8Roll, requested)
 
@@ -525,9 +532,17 @@ async function handleD8Delta(
     }
   }
 
-  // 按钮：保留增量调整（每行最多 3 个）+ 撤回，方便继续微调
-  const btns: QQButton[][] = [...d8DeltaButtonRows(o.d8Roll, o.newDelta)]
-  btns.push([{ label: '撤回', data: '/撤回骰点', type: 'input', enter: true }])
+  const btns: QQButton[][] = [rerollRow(pending)]
+  const adjustRow: QQButton[] = [
+    { label: '成功 +1', data: '/增加成功 1', type: 'input', enter: true },
+    { label: '成功 -1', data: '/减少成功 1', type: 'input', enter: true },
+  ]
+  if (pending.d6Roll !== null) {
+    adjustRow.push({ label: '调整 d6', data: '/d6调', type: 'input', enter: true })
+  }
+  btns.push(adjustRow)
+  btns.push(...d8DeltaButtonRows(o.d8Roll, o.newDelta))
+  btns.push([{ label: '撤回本次骰点', data: '/撤回骰点', type: 'input', enter: true }])
 
   await reply(session, deps, renderD8DeltaChange(o), btns)
 }
@@ -854,7 +869,7 @@ async function handle(
   )
 
   const md = renderPostRoll(o)
-  const buttons = renderPostRollButtons(o)
+  const buttons = renderPostRollButtons(o, pending)
   await reply(session, deps, md, buttons)
 }
 
@@ -907,18 +922,53 @@ function renderPostRoll(o: PostRollOutcome): string {
   return lines.join('\n')
 }
 
-function renderPostRollButtons(o: PostRollOutcome): QQButton[][] {
-  const buttons: QQButton[][] = []
+function renderPostRollButtons(
+  o: PostRollOutcome,
+  pending: import('../types').PendingRoll,
+): QQButton[][] {
+  const buttons: QQButton[][] = [rerollRow(pending)]
   const row: QQButton[] = []
   if (o.pendingRemainingNonThrees > 0) {
-    row.push({ label: '成功+1', data: '/增加成功 1', primary: true, type: 'input', enter: true })
+    row.push({ label: '成功 +1', data: '/增加成功 1', type: 'input', enter: true })
   }
   if (o.pendingRemainingThrees > 0) {
-    row.push({ label: '成功-1', data: '/减少成功 1', type: 'input', enter: true })
+    row.push({ label: '成功 -1', data: '/减少成功 1', type: 'input', enter: true })
   }
+  if (pending.d6Roll !== null) row.push({ label: '调整 d6', data: '/d6调', type: 'input', enter: true })
   if (row.length > 0) buttons.push(row)
-  buttons.push([{ label: '撤回', data: '/撤回骰点', type: 'input', enter: true }])
+  if (pending.d8Roll !== null) {
+    buttons.push(...d8DeltaButtonRows(pending.d8Roll, pending.d8Delta))
+  }
+  buttons.push([{ label: '撤回本次骰点', data: '/撤回骰点', type: 'input', enter: true }])
   return buttons
+}
+
+/** 解析不会被 Koishi 当成选项的 d8 参数；纯数字正值保留兼容。 */
+export function parseD8DeltaArg(value: string | undefined): number | null {
+  const token = (value ?? '').trim()
+  if (token === '忽略' || token === '0') return 0
+  let match = token.match(/^加([12])$/)
+  if (match) return Number.parseInt(match[1], 10)
+  match = token.match(/^减([12])$/)
+  if (match) return -Number.parseInt(match[1], 10)
+  if (/^\+?[12]$/.test(token)) return Number.parseInt(token, 10)
+  // 兼容直接调用和旧链接；QQ/Koishi 文字命令里的负号仍可能先被框架吃掉。
+  if (/^-[12]$/.test(token)) return Number.parseInt(token, 10)
+  return null
+}
+
+function rerollRow(pending: import('../types').PendingRoll): QQButton[] {
+  const apt = pending.aptitudeName
+  return [
+    {
+      label: `再投·${apt.length > 6 ? `${apt.slice(0, 6)}…` : apt}`,
+      data: `/${pending.trigger} ${apt}`,
+      primary: true,
+      type: 'input',
+      enter: true,
+    },
+    { label: '更换资质', data: `/${pending.trigger}`, type: 'input', enter: true },
+  ]
 }
 
 async function reply(

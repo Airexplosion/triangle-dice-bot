@@ -30,20 +30,7 @@ export function registerAdminCommands(ctx: Context, deps: AdminDeps): void {
       const rs = await loadRoom(deps, session)
       if (typeof rs === 'string') return reply(session, deps, rs)
       const md = renderTaskAttrs(rs)
-      const buttons: QQButton[][] = [
-        [
-          { label: '混沌+', data: '混沌增加 ', primary: true, type: 'input' },
-          { label: '混沌-', data: '混沌减少 ', type: 'input' },
-        ],
-        [
-          { label: '失败+', data: '失败增加 ', type: 'input' },
-          { label: '失败-', data: '失败减少 ', type: 'input' },
-        ],
-        [
-          { label: '散逸+', data: '散逸增加 ', type: 'input' },
-          { label: '散逸-', data: '散逸减少 ', type: 'input' },
-        ],
-      ]
+      const buttons = buildTaskAttrButtons(isAdmin(session, rs), undefined, Boolean(rs.missionId))
       await reply(session, deps, md, buttons)
     })
 
@@ -82,6 +69,73 @@ export function registerAdminCommands(ctx: Context, deps: AdminDeps): void {
     .action(async ({ session }, n) =>
       modifyCounter(deps, session, '散逸', '减少', n),
     )
+
+  ctx
+    .command('调整属性 <field:string> [direction:string] [n:posint]', '管理员：调整任务属性')
+    .action(async ({ session }, field, direction, n) => {
+      const normalized = normalizeCounterField(field)
+      if (!session) return
+      if (!normalized) {
+        await reply(session, deps, '> 用法：调整属性 混沌/燃尽/散逸 加/减 N')
+        return
+      }
+
+      // Koishi 会把以「-」开头的位置参数当成命令选项，导致 -1/-2 无法传进 action。
+      // 统一使用「加/减 + 正整数」，按钮文案仍可正常显示 +1/−1。
+      if (!direction) {
+        await reply(session, deps, `# 自定义${counterLabel(normalized)}\n\n请选择调整方向：`, [
+          [
+            { label: '增加', data: `/调整属性 ${normalized} 加 `, primary: true, type: 'input' },
+            { label: '减少', data: `/调整属性 ${normalized} 减 `, type: 'input' },
+          ],
+        ])
+        return
+      }
+      const action = normalizeCounterDirection(direction)
+      if (!action || !n || n <= 0) {
+        await reply(session, deps, '> 用法：调整属性 混沌/燃尽/散逸 加/减 N（N ≥ 1）')
+        return
+      }
+      await modifyCounter(
+        deps,
+        session,
+        normalized,
+        action,
+        n,
+      )
+    })
+
+  ctx.command('管理面板', '管理员：打开当前群管理面板').action(async ({ session }) => {
+    if (!session) return
+    const rs = await loadRoom(deps, session)
+    if (typeof rs === 'string') return reply(session, deps, rs)
+    if (!isAdmin(session, rs)) return reply(session, deps, '> 需要管理员权限。')
+
+    const lines = ['# 经理面板', '']
+    lines.push(rs.missionActive ? `当前任务　**${rs.missionName ?? '进行中'}**` : '当前任务　**未开始**')
+    const buttons: QQButton[][] = []
+    if (rs.missionActive) {
+      const taskRow: QQButton[] = []
+      if (rs.missionId) taskRow.push({ label: '任务详情', data: '/查看任务', type: 'input', enter: true })
+      taskRow.push({ label: '任务属性', data: '/任务属性', primary: true, type: 'input', enter: true })
+      if (rs.missionId) taskRow.push({ label: '任务报告', data: '/查看报告', type: 'input', enter: true })
+      buttons.push(taskRow)
+      buttons.push([
+        { label: '结束任务', data: '/结束任务', type: 'input', enter: true },
+        { label: '解绑任务', data: '/解绑任务', type: 'input', enter: true },
+      ])
+    } else {
+      buttons.push([
+        { label: '填写任务绑定码', data: '开始任务 ', type: 'input' },
+        { label: '独立任务模式', data: '/开始任务 不使用', type: 'input', enter: true },
+      ])
+    }
+    buttons.push([
+      { label: '跑团日志', data: '/log', type: 'input', enter: true },
+      { label: '操作菜单', data: '/菜单', type: 'input', enter: true },
+    ])
+    await reply(session, deps, lines.join('\n'), buttons)
+  })
 
   ctx
     .command('注册管理 [mode:string]', '注册首位管理员（群聊场景）')
@@ -180,23 +234,54 @@ async function modifyCounter(
     '',
     `${label}　**${oldVal} → ${newVal}**`,
   ].join('\n')
-  // 增减按钮 type='input'（点了填输入框等用户补数字）；[任务属性] 默认 callback（按了直接处理）
-  const buttons: QQButton[][] = [
-    [
-      { label: '混沌+', data: '混沌增加 ', primary: field === '混沌', type: 'input' },
-      { label: '混沌-', data: '混沌减少 ', type: 'input' },
-    ],
-    [
-      { label: '失败+', data: '失败增加 ', primary: field === '失败', type: 'input' },
-      { label: '失败-', data: '失败减少 ', type: 'input' },
-    ],
-    [
-      { label: '散逸+', data: '散逸增加 ', primary: field === '散逸', type: 'input' },
-      { label: '散逸-', data: '散逸减少 ', type: 'input' },
-    ],
-    [{ label: '属性', data: '/任务属性', type: 'input', enter: true }],
-  ]
+  const buttons = buildTaskAttrButtons(true, field, Boolean(room.missionId))
   await reply(session, deps, md, buttons)
+}
+
+function normalizeCounterField(field: string | undefined): '混沌' | '失败' | '散逸' | null {
+  const value = field?.trim()
+  if (value === '混沌' || value === '混沌池') return '混沌'
+  if (value === '失败' || value === '燃尽' || value === '燃尽计数') return '失败'
+  if (value === '散逸' || value === '散逸端') return '散逸'
+  return null
+}
+
+function normalizeCounterDirection(direction: string | undefined): '增加' | '减少' | null {
+  const value = direction?.trim()
+  if (value === '加' || value === '增加' || value === '+' || value === '+1') return '增加'
+  if (value === '减' || value === '减少') return '减少'
+  return null
+}
+
+function counterLabel(field: '混沌' | '失败' | '散逸'): string {
+  return field === '混沌' ? '混沌' : field === '失败' ? '燃尽' : '散逸'
+}
+
+export function buildTaskAttrButtons(
+  admin: boolean,
+  highlight?: '混沌' | '失败' | '散逸',
+  webMission = true,
+): QQButton[][] {
+  const rows: QQButton[][] = []
+  if (admin) {
+    const addRow = (field: '混沌' | '失败' | '散逸', label: string) => {
+      rows.push([
+        { label: `${label} −1`, data: `/调整属性 ${field} 减 1`, type: 'input', enter: true },
+        { label: `${label} +1`, data: `/调整属性 ${field} 加 1`, primary: highlight === field, type: 'input', enter: true },
+        { label: `${label}自定义`, data: `/调整属性 ${field}`, type: 'input', enter: true },
+      ])
+    }
+    addRow('混沌', '混沌')
+    addRow('失败', '燃尽')
+    addRow('散逸', '散逸')
+  }
+  const nav: QQButton[] = [
+    { label: '刷新属性', data: '/任务属性', primary: !admin, type: 'input', enter: true },
+  ]
+  if (webMission) nav.push({ label: '任务详情', data: '/查看任务', type: 'input', enter: true })
+  nav.push({ label: admin ? '经理面板' : '操作菜单', data: admin ? '/管理面板' : '/菜单', type: 'input', enter: true })
+  rows.push(nav)
+  return rows
 }
 
 // ---------------------------------------------------------------------------

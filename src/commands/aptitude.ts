@@ -109,11 +109,17 @@ export function registerAptitudeCommand(ctx: Context, deps: AptitudeDeps): void 
         [
           {
             label: '现实修改',
-            data: `现实修改 ${snapshot[0]?.name ?? '专注'}`,
+            data: '/现实修改',
+            primary: true,
+            type: 'input',
+            enter: true,
           },
           {
             label: '异常能力',
-            data: `异常能力 ${snapshot[0]?.name ?? '专注'}`,
+            data: '/异常能力',
+            primary: true,
+            type: 'input',
+            enter: true,
           },
         ],
       ]

@@ -12,8 +12,8 @@ export interface AuditDeps {
   auditUserIds: string[]
 }
 
-/** 一屏内最多带按钮展示的申请条数（QQ 键盘最多 5 行）。 */
-const MAX_WITH_BUTTONS = 5
+/** 留一行给翻页；QQ 键盘最多 5 行。 */
+const MAX_WITH_BUTTONS = 4
 
 export function registerAuditCommands(ctx: Context, deps: AuditDeps): void {
   const wrap = makeWrap(ctx, deps.useMarkdown)
@@ -47,8 +47,10 @@ export function registerAuditCommands(ctx: Context, deps: AuditDeps): void {
       if (gate) return reply(session, deps, `> ${gate}`)
       if (!deps.web) return reply(session, deps, NETWORK_ERROR_BLOCK)
 
-      // 有 action+id → 执行审核；否则列出待审核
-      if (action && id) {
+      const requestedPage = action?.trim() === '页' ? Number.parseInt(id ?? '1', 10) : 1
+
+      // 有 action+id → 执行审核；“页 N”仅用于翻页。
+      if (action && id && action.trim() !== '页') {
         const verb = parseAction(action)
         if (!verb) return reply(session, deps, '> 用法：经理审核 通过/拒绝 <编号> [备注]')
         const appId = Number.parseInt(id, 10)
@@ -73,21 +75,27 @@ export function registerAuditCommands(ctx: Context, deps: AuditDeps): void {
       const apps = r.applications ?? []
       if (!apps.length) return reply(session, deps, '> 当前没有待审核的经理申请。')
 
-      const lines: string[] = [`# 待审核 · 经理申请`, '', `共 ${apps.length} 条待处理`, '']
-      const shown = apps.slice(0, MAX_WITH_BUTTONS)
+      const totalPages = Math.max(1, Math.ceil(apps.length / MAX_WITH_BUTTONS))
+      const page = Math.max(1, Math.min(Number.isNaN(requestedPage) ? 1 : requestedPage, totalPages))
+      const start = (page - 1) * MAX_WITH_BUTTONS
+      const lines: string[] = [`# 待审核 · 经理申请`, '', `第 ${page} / ${totalPages} 页　共 ${apps.length} 条`, '']
+      lines.push('> 拒绝按钮会预填命令，请补充备注后发送。', '')
+      const shown = apps.slice(start, start + MAX_WITH_BUTTONS)
       const buttons: QQButton[][] = []
       shown.forEach((a, i) => {
         const who = a.name ? `${a.name}（@${a.username}）` : `@${a.username}`
-        lines.push(`${i + 1}. **#${a.id}** ${who}　角色 ${a.char_count} 张`)
+        lines.push(`${start + i + 1}. **#${a.id}** ${who}　角色 ${a.char_count} 张`)
         if (a.reason && a.reason.trim()) lines.push(`　理由：${a.reason.trim()}`)
         buttons.push([
           { label: `通过 #${a.id}`, data: `/经理审核 通过 ${a.id}`, primary: true, type: 'input', enter: true },
-          { label: `拒绝 #${a.id}`, data: `/经理审核 拒绝 ${a.id}`, type: 'input', enter: true },
+          { label: `拒绝 #${a.id}`, data: `/经理审核 拒绝 ${a.id} `, type: 'input' },
         ])
       })
-      if (apps.length > MAX_WITH_BUTTONS) {
-        lines.push('')
-        lines.push(`> 仅显示前 ${MAX_WITH_BUTTONS} 条，处理后再发 /经理审核 查看下一批。`)
+      const nav: QQButton[] = []
+      if (page > 1) nav.push({ label: '上一页', data: `/经理审核 页 ${page - 1}`, type: 'input', enter: true })
+      if (page < totalPages) nav.push({ label: '下一页', data: `/经理审核 页 ${page + 1}`, type: 'input', enter: true })
+      if (nav.length) {
+        buttons.push(nav)
       }
       await reply(session, deps, lines.join('\n'), buttons)
     }),
@@ -101,7 +109,9 @@ export function registerAuditCommands(ctx: Context, deps: AuditDeps): void {
       if (gate) return reply(session, deps, `> ${gate}`)
       if (!deps.web) return reply(session, deps, NETWORK_ERROR_BLOCK)
 
-      if (action && id) {
+      const requestedPage = action?.trim() === '页' ? Number.parseInt(id ?? '1', 10) : 1
+
+      if (action && id && action.trim() !== '页') {
         const verb = parseAction(action)
         if (!verb) return reply(session, deps, '> 用法：分部审核 通过/拒绝 <编号> [备注]')
         const appId = Number.parseInt(id, 10)
@@ -125,23 +135,29 @@ export function registerAuditCommands(ctx: Context, deps: AuditDeps): void {
       const apps = r.applications ?? []
       if (!apps.length) return reply(session, deps, '> 当前没有待审核的分部申请。')
 
-      const lines: string[] = [`# 待审核 · 分部创建`, '', `共 ${apps.length} 条待处理`, '']
-      const shown = apps.slice(0, MAX_WITH_BUTTONS)
+      const totalPages = Math.max(1, Math.ceil(apps.length / MAX_WITH_BUTTONS))
+      const page = Math.max(1, Math.min(Number.isNaN(requestedPage) ? 1 : requestedPage, totalPages))
+      const start = (page - 1) * MAX_WITH_BUTTONS
+      const lines: string[] = [`# 待审核 · 分部创建`, '', `第 ${page} / ${totalPages} 页　共 ${apps.length} 条`, '']
+      lines.push('> 拒绝按钮会预填命令，请补充备注后发送。', '')
+      const shown = apps.slice(start, start + MAX_WITH_BUTTONS)
       const buttons: QQButton[][] = []
       shown.forEach((a, i) => {
         const who = a.name ? `${a.name}（@${a.username}）` : `@${a.username}`
-        lines.push(`${i + 1}. **#${a.id}** 分部「${a.branch_name}」　申请人 ${who}`)
+        lines.push(`${start + i + 1}. **#${a.id}** 分部「${a.branch_name}」　申请人 ${who}`)
         if (a.branch_description && a.branch_description.trim())
           lines.push(`　简介：${a.branch_description.trim()}`)
         if (a.reason && a.reason.trim()) lines.push(`　理由：${a.reason.trim()}`)
         buttons.push([
           { label: `通过 #${a.id}`, data: `/分部审核 通过 ${a.id}`, primary: true, type: 'input', enter: true },
-          { label: `拒绝 #${a.id}`, data: `/分部审核 拒绝 ${a.id}`, type: 'input', enter: true },
+          { label: `拒绝 #${a.id}`, data: `/分部审核 拒绝 ${a.id} `, type: 'input' },
         ])
       })
-      if (apps.length > MAX_WITH_BUTTONS) {
-        lines.push('')
-        lines.push(`> 仅显示前 ${MAX_WITH_BUTTONS} 条，处理后再发 /分部审核 查看下一批。`)
+      const nav: QQButton[] = []
+      if (page > 1) nav.push({ label: '上一页', data: `/分部审核 页 ${page - 1}`, type: 'input', enter: true })
+      if (page < totalPages) nav.push({ label: '下一页', data: `/分部审核 页 ${page + 1}`, type: 'input', enter: true })
+      if (nav.length) {
+        buttons.push(nav)
       }
       await reply(session, deps, lines.join('\n'), buttons)
     }),

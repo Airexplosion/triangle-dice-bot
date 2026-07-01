@@ -1,9 +1,11 @@
 import type { Argv, Context } from 'koishi'
 import { HELP_CHECK_SECTION, HELP_PAGES } from '../const'
+import { rawRoomIdOf, roomIdOf } from '../room'
 import type { LogStore } from '../service/log-store'
 import type { PendingAdminApplications, PendingRollStore } from '../service/pending'
 import type { RoomStore } from '../service/store'
 import type { WebClient } from '../service/web-client'
+import { isAdmin } from '../util/auth'
 import { sendQQMarkdown, type QQButton } from '../util/qq-markdown'
 import { registerAdminCommands } from './admin'
 import { registerAptitudeCommand } from './aptitude'
@@ -45,7 +47,7 @@ const OUR_COMMAND_NAMES: ReadonlySet<string> = new Set([
   '增加成功', '减少成功', '撤回骰点',
   'd8', 'd10调', 'd6调',
   '录入资质',
-  '任务属性', '混沌增加', '混沌减少', '失败增加', '失败减少', '散逸增加', '散逸减少',
+  '任务属性', '调整属性', '管理面板', '混沌增加', '混沌减少', '失败增加', '失败减少', '散逸增加', '散逸减少',
   '注册管理', '申请管理', '同意管理',
   '绑定', '解绑', '查询绑定', '查询状态', '查询嘉奖', '查询物品', '查询角色', '切换角色',
   '查看任务', '开始任务', '结束任务', '解绑任务',
@@ -94,7 +96,7 @@ export function registerCommands(ctx: Context, deps: CommandDeps): void {
   }
   const todoMd = (phase: 'P2' | 'P3' | 'P4', label: string) => md(TODO(phase, label))
 
-  // ========== help（分页）==========
+  // ========== 主菜单 + help（分页）==========
   // 用户已在 Koishi 控制台禁用 @koishijs/plugin-help，'帮助' 名字可用
   const TOTAL_HELP_PAGES = HELP_PAGES.length
   const buildHelpButtons = (page: number): QQButton[][] => {
@@ -107,17 +109,98 @@ export function registerCommands(ctx: Context, deps: CommandDeps): void {
     }
     const rows: QQButton[][] = []
     if (nav.length) rows.push(nav)
-    // 常用快捷入口固定一行
-    rows.push([
-      { label: '任务', data: '/查看任务', type: 'input', enter: true },
-      { label: '角色', data: '/查询角色', type: 'input', enter: true },
-      { label: '状态', data: '/查询状态', type: 'input', enter: true },
-    ])
+    rows.push([{ label: '操作菜单', data: '/菜单', primary: true, type: 'input', enter: true }])
     return rows
   }
+
+  ctx.command('菜单', '打开常用操作菜单').action(async ({ session }) => {
+    if (!session) return
+
+    const rawRoomId = rawRoomIdOf(session)
+    const compositeRoomId = roomIdOf(session)
+    const userId = session.userId
+    const [binding, hasCheck] = await Promise.all([
+      deps.web && userId ? deps.web.getBindingStatus(userId) : Promise.resolve(null),
+      characterHasHighWall(deps.web, session, 'T3'),
+    ])
+
+    let admin = false
+    let missionActive = false
+    let webMission = false
+    let missionName: string | null = null
+    if (rawRoomId && compositeRoomId) {
+      const room = await deps.rooms.getOrCreate(compositeRoomId, session.platform, rawRoomId)
+      admin = isAdmin(session, room)
+      missionActive = room.missionActive
+      webMission = Boolean(room.missionId)
+      missionName = room.missionName
+    }
+
+    const bound = Boolean(binding?.bound)
+    const lines = ['# 三角机构 · 操作菜单', '']
+    lines.push(bound ? `角色卡　**已绑定**` : '角色卡　**未绑定**')
+    if (rawRoomId) {
+      lines.push(missionActive ? `当前任务　**${missionName ?? '进行中'}**` : '当前任务　**未开始**')
+    }
+    lines.push('', '> 只显示当前场景可用的主要入口。')
+
+    const buttons: QQButton[][] = []
+    if (!session.isDirect) {
+      const diceRow: QQButton[] = [
+        { label: '现实修改', data: '/现实修改', primary: true, type: 'input', enter: true },
+        { label: '异常能力', data: '/异常能力', primary: true, type: 'input', enter: true },
+      ]
+      if (hasCheck) diceRow.push({ label: '检定', data: '/检定', type: 'input', enter: true })
+      buttons.push(diceRow)
+    }
+
+    if (bound) {
+      buttons.push([
+        { label: '角色状态', data: '/查询状态', type: 'input', enter: true },
+        { label: '物品背包', data: '/查询物品', type: 'input', enter: true },
+        { label: '切换角色', data: '/查询角色', type: 'input', enter: true },
+      ])
+    } else {
+      buttons.push([
+        { label: '填写绑定码', data: '绑定 ', type: 'input' },
+        { label: '查询绑定', data: '/查询绑定', type: 'input', enter: true },
+      ])
+    }
+
+    if (rawRoomId) {
+      if (missionActive) {
+        const taskRow: QQButton[] = []
+        if (webMission) taskRow.push({ label: '任务详情', data: '/查看任务', type: 'input', enter: true })
+        taskRow.push({ label: '任务属性', data: '/任务属性', type: 'input', enter: true })
+        if (bound && webMission) taskRow.push({ label: '任务报告', data: '/查看报告', type: 'input', enter: true })
+        buttons.push(taskRow)
+      } else if (admin) {
+        buttons.push([
+          { label: '填写任务绑定码', data: '开始任务 ', type: 'input' },
+          { label: '独立任务模式', data: '/开始任务 不使用', type: 'input', enter: true },
+        ])
+      }
+      buttons.push([
+        { label: '跑团日志', data: '/log', type: 'input', enter: true },
+        { label: '更多说明', data: '/帮助 1', type: 'input', enter: true },
+      ])
+    } else {
+      buttons.push([{ label: '更多说明', data: '/帮助 1', type: 'input', enter: true }])
+    }
+
+    if (admin) {
+      buttons.push([{ label: '经理面板', data: '/管理面板', type: 'input', enter: true }])
+    }
+
+    await sendQQMarkdown(session, lines.join('\n'), {
+      enabled: deps.useMarkdown,
+      buttons,
+    })
+  })
+
   ctx
     .command('帮助 [page:string]')
-    .alias('骰点帮助', '菜单')
+    .alias('骰点帮助')
     .action(async (argv, page) => {
       if (!argv.session) return
       const n = Number.parseInt((page ?? '1').trim(), 10)

@@ -57,10 +57,15 @@ export function registerReportCommands(ctx: Context, deps: ReportDeps): void {
       const buttons: QQButton[][] = []
       if (rep.myStatus === 'pending') {
         buttons.push([
-          { label: '通过', data: '/通过报告', primary: true, type: 'input', enter: true },
-          { label: '申诉', data: '申诉报告 ', type: 'input' },
+          { label: '接受评级', data: '/通过报告', primary: true, type: 'input', enter: true },
+          { label: '填写申诉理由', data: '申诉报告 ', type: 'input' },
         ])
       }
+      buttons.push([
+        { label: '角色状态', data: '/查询状态', type: 'input', enter: true },
+        { label: '任务详情', data: '/查看任务', type: 'input', enter: true },
+        { label: '操作菜单', data: '/菜单', type: 'input', enter: true },
+      ])
       await reply(session, deps, lines.join('\n'), buttons)
     }),
   )
@@ -82,7 +87,10 @@ export function registerReportCommands(ctx: Context, deps: ReportDeps): void {
         session,
         deps,
         `> ${r.message ?? '已接受评级'}${note}`,
-        [[{ label: '状态', data: '/查询状态', type: 'input', enter: true }]],
+        [[
+          { label: '角色状态', data: '/查询状态', primary: true, type: 'input', enter: true },
+          { label: '任务详情', data: '/查看任务', type: 'input', enter: true },
+        ]],
       )
     }),
   )
@@ -107,7 +115,10 @@ export function registerReportCommands(ctx: Context, deps: ReportDeps): void {
       )
       if (!r) return reply(session, deps, NETWORK_ERROR_BLOCK)
       if (!r.success) return reply(session, deps, `> ${r.error ?? '申诉失败'}`)
-      await reply(session, deps, `> ${r.message ?? '申诉已提交，等待经理处理。'}`)
+      await reply(session, deps, `> ${r.message ?? '申诉已提交，等待经理处理。'}`, [[
+        { label: '查看报告', data: '/查看报告', primary: true, type: 'input', enter: true },
+        { label: '任务详情', data: '/查看任务', type: 'input', enter: true },
+      ]])
     }),
   )
 }

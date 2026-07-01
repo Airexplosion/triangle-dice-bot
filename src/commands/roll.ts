@@ -134,7 +134,7 @@ export const TRIPLE_SUBLIMATION_IMG =
 
 export function registerRollCommands(ctx: Context, deps: RollDeps): void {
   ctx
-    .command('现实修改 <aptitude:string>', '使用现实修改触发骰点')
+    .command('现实修改 [aptitude:string]', '使用现实修改触发骰点')
     .action(async ({ session }, aptitude) => {
       if (!session) return
       // 归档拦截 + G3 解锁判定（合用一次 getDiceUnlocks）
@@ -155,7 +155,7 @@ export function registerRollCommands(ctx: Context, deps: RollDeps): void {
     })
 
   ctx
-    .command('异常能力 <aptitude:string> [diceMode:string]', '使用异常能力触发骰点')
+    .command('异常能力 [aptitude:string] [diceMode:string]', '使用异常能力触发骰点')
     .action(async ({ session }, aptitude, diceMode) => {
       if (!session) return
       // 无参 / __LIST__ <页>：显示分页异常能力列表（文字编号 + 数字按钮）
@@ -209,8 +209,8 @@ export function registerRollCommands(ctx: Context, deps: RollDeps): void {
 }
 
 /**
- * 显示分页的异常能力列表：异常名 + 资质以文字编号列出，按钮只放序号（每行 4 个，每页 8 个）。
- * 序号按钮 data = `/异常能力 <资质>`（点击直接触发该异常对应资质的骰点）。
+ * 显示分页的异常能力列表：上方按文字编号列出能力名 + 资质，下方只放数字按钮。
+ * 数字按钮 data = `/异常能力 <资质>`（点击直接触发该异常对应资质的骰点）。
  * 返回：
  *   'shown'    — 已渲染列表
  *   'archived' — 角色卡已归档（调用方应提示已归档、不再展示任何骰点 UI）
@@ -240,46 +240,54 @@ async function showAnomalyList(
   const head = resp.characterName ? `# 异常能力（${resp.characterName}）` : '# 异常能力'
   const lines: string[] = [head, '']
   if (totalPages > 1) lines.push(`第 ${cur} / ${totalPages} 页　共 ${total} 项`)
-  lines.push('点击下方序号触发：')
+  lines.push('点击下方对应编号触发：')
   lines.push('')
   slice.forEach((a, i) => {
     lines.push(`**${start + i + 1}.** ${a.name}（${a.qualName}）`)
   })
 
-  // 数字按钮：每行 4 个
-  const numButtons: QQButton[] = slice.map((a, i) => ({
-    label: String(start + i + 1),
-    data: `/异常能力 ${a.qualName!}`,
-    type: 'input',
-    enter: true,
-  }))
-  const rows: QQButton[][] = []
-  for (let i = 0; i < numButtons.length; i += 4) {
-    rows.push(numButtons.slice(i, i + 4))
-  }
-  // 翻页
+  const rows = buildAnomalyNumberButtonRows(slice, start)
+  // 翻页与按资质选择统一收在最后一行，整屏最多 3 行。
   const nav: QQButton[] = []
   if (cur > 1) {
     nav.push({ label: '上一页', data: `/异常能力 __LIST__ ${cur - 1}`, type: 'input', enter: true })
   }
+  nav.push({ label: '按资质选择', data: '/异常能力 __GRID__', type: 'input', enter: true })
   if (cur < totalPages) {
     nav.push({ label: '下一页', data: `/异常能力 __LIST__ ${cur + 1}`, primary: true, type: 'input', enter: true })
   }
-  if (nav.length) rows.push(nav)
-  // 显示资质（九宫格）入口
-  rows.push([{ label: '显示资质', data: '/异常能力 __GRID__', type: 'input', enter: true }])
+  rows.push(nav)
 
   await reply(session, deps, lines.join('\n'), rows)
   return 'shown'
 }
 
+/** 异常能力上方已有完整文字，下方按钮只保留数字，避免名称挤压。 */
+export function buildAnomalyNumberButtonRows(
+  abilities: ReadonlyArray<{ qualName?: string | null }>,
+  start: number,
+): QQButton[][] {
+  const buttons: QQButton[] = abilities.map((ability, i) => ({
+    label: String(start + i + 1),
+    data: `/异常能力 ${ability.qualName!}`,
+    type: 'input',
+    enter: true,
+  }))
+  const rows: QQButton[][] = []
+  for (let i = 0; i < buttons.length; i += 4) rows.push(buttons.slice(i, i + 4))
+  return rows
+}
+
 /** 检定向导用的 3x3 资质九宫格；每个按钮 data = `${prefix}${资质}`（input+enter）。 */
-function buildCheckGrid(prefix: string): QQButton[][] {
+export function buildCheckGrid(
+  prefix: string,
+  values?: Readonly<Record<string, number>> | null,
+): QQButton[][] {
   const rows: QQButton[][] = []
   for (let i = 0; i < APTITUDE_NAMES.length; i += 3) {
     rows.push(
       APTITUDE_NAMES.slice(i, i + 3).map((name) => ({
-        label: name,
+        label: values ? `${name}·${values[name] ?? 0}` : name,
         data: `${prefix}${name}`,
         type: 'input' as const,
         enter: true,
@@ -326,6 +334,25 @@ async function handleCheck(
     return
   }
 
+  const roomId = roomIdOf(session)
+  const rawRoomId = rawRoomIdOf(session)
+  if (!roomId || !rawRoomId) {
+    await reply(session, deps, '> 无法定位房间。')
+    return
+  }
+  const playerId = session.userId ?? 'unknown'
+
+  // 向导开始前就取资质，让按钮直接展示当前点数，避免第二步才发现扣费资质不足。
+  let webAptitudes: Record<string, number> | null = null
+  if (deps.web && playerId) {
+    const apt = await deps.web.getAptitudes(playerId, rawRoomId)
+    if (apt?.archived) {
+      await reply(session, deps, '> 该角色卡已归档，机器人无法对其进行检定 / 操作。')
+      return
+    }
+    if (apt?.success && apt.attrs) webAptitudes = mapWebAttrsToAptitudes(apt.attrs)
+  }
+
   // ── 向导步骤 1：未给扣费资质 → 选扣费资质 ──
   if (!costApt || !APTITUDE_SET.has(costApt)) {
     await reply(
@@ -336,12 +363,16 @@ async function handleCheck(
         '',
         '请选择**扣费资质**（从中扣 1 点资质作为代价）：',
       ].join('\n'),
-      buildCheckGrid('/检定 '),
+      buildCheckGrid('/检定 ', webAptitudes),
     )
     return
   }
   // ── 向导步骤 2：有扣费资质、未给加值资质 → 选加值资质 ──
   if (!addApt || !APTITUDE_SET.has(addApt)) {
+    const buttons = buildCheckGrid(`/检定 ${costApt} `, webAptitudes)
+    buttons.push([
+      { label: '重新选择扣费资质', data: '/检定', type: 'input', enter: true },
+    ])
     await reply(
       session,
       deps,
@@ -352,30 +383,13 @@ async function handleCheck(
         '',
         '请选择**加值资质**（把它当前资质值加到 d20 上）：',
       ].join('\n'),
-      buildCheckGrid(`/检定 ${costApt} `),
+      buttons,
     )
     return
   }
 
-  const roomId = roomIdOf(session)
-  const rawRoomId = rawRoomIdOf(session)
-  if (!roomId || !rawRoomId) {
-    await reply(session, deps, '> 无法定位房间。')
-    return
-  }
-  const playerId = session.userId ?? 'unknown'
-
   // 骰前从 web 同步混沌池 + 玩家资质
   await syncFromWeb(deps.web, deps.rooms, session)
-  let webAptitudes: Record<string, number> | null = null
-  if (deps.web && playerId) {
-    const apt = await deps.web.getAptitudes(playerId, rawRoomId)
-    if (apt?.archived) {
-      await reply(session, deps, '> 该角色卡已归档，机器人无法对其进行检定 / 操作。')
-      return
-    }
-    if (apt?.success && apt.attrs) webAptitudes = mapWebAttrsToAptitudes(apt.attrs)
-  }
 
   let result: CheckResult | null = null
 
@@ -494,14 +508,16 @@ async function handleCheck(
 
   await reply(session, deps, renderCheck(r), [
     [
-      { label: '撤回', data: '/撤回骰点', type: 'input', enter: true },
       {
-        label: `再检定`,
+        label: `再检定同组合`,
         data: `/检定 ${r.costApt} ${r.addApt}`,
+        primary: true,
         type: 'input',
         enter: true,
       },
+      { label: '更换资质', data: '/检定', type: 'input', enter: true },
     ],
+    [{ label: '撤回本次骰点', data: '/撤回骰点', type: 'input', enter: true }],
   ])
 }
 
@@ -590,11 +606,11 @@ async function replyDiceChoicePanel(
     head.push('> d10：1 颗 d10 代替 6 颗 d4')
     head.push('> d10+d6：d10 + 1 颗 d6')
     buttons.push([
-      { label: '仅 d4', data: cmd('d4'), type: 'input', enter: true },
-      { label: '+ d6', data: cmd('d6'), type: 'input', enter: true },
+      { label: '常规 6d4', data: cmd('d4'), type: 'input', enter: true },
+      { label: '附加 d6', data: cmd('d6'), type: 'input', enter: true },
     ])
     buttons.push([
-      { label: 'd10', data: cmd('d10'), primary: true, type: 'input', enter: true },
+      { label: '改用 d10', data: cmd('d10'), primary: true, type: 'input', enter: true },
       { label: 'd10 + d6', data: cmd('d10d6'), primary: true, type: 'input', enter: true },
     ])
   } else if (unlocks.n1) {
@@ -603,8 +619,8 @@ async function replyDiceChoicePanel(
     head.push('')
     head.push('> N 面 → N 个 3 + N 点混沌　3 = 直接失败，禁三重升华')
     buttons.push([
-      { label: '用 10 面骰', data: cmd('d10'), primary: true, type: 'input', enter: true },
-      { label: '不用', data: cmd('d4'), type: 'input', enter: true },
+      { label: '改用 d10', data: cmd('d10'), primary: true, type: 'input', enter: true },
+      { label: '常规 6d4', data: cmd('d4'), type: 'input', enter: true },
     ])
   } else {
     // 仅 U2
@@ -613,8 +629,8 @@ async function replyDiceChoicePanel(
     head.push('')
     head.push('> 1/2/4/5 → +1 混沌　3 → 算 1 个 3　6 → 算 2 个 3')
     buttons.push([
-      { label: '用 6 面骰', data: cmd('d6'), primary: true, type: 'input', enter: true },
-      { label: '不用', data: cmd('d4'), type: 'input', enter: true },
+      { label: '附加 d6', data: cmd('d6'), primary: true, type: 'input', enter: true },
+      { label: '常规 6d4', data: cmd('d4'), type: 'input', enter: true },
     ])
   }
   await reply(session, deps, head.join('\n'), buttons)
@@ -1095,7 +1111,8 @@ export function d8DeltaButtonRows(
   if (max === 0) return []
   const mk = (v: number): QQButton => ({
     label: d8DeltaLabel(v),
-    data: `/d8 ${v}`,
+    // Koishi 会把 -1/-2 当命令选项；用中文 token 传递负方向。
+    data: `/d8 ${d8DeltaCommandToken(v)}`,
     primary: currentDelta === v,
     type: 'input',
     enter: true,
@@ -1108,7 +1125,7 @@ export function d8DeltaButtonRows(
 function renderRollButtons(r: RollResult): QQButton[][] {
   // d10 模式没有 d4 池，"增/减成功"按钮不适用；给 d10/d6 调整入口 + 撤回 + 再投
   if (r.d10Roll !== null) {
-    const rows: QQButton[][] = []
+    const rows: QQButton[][] = [rerollRow(r)]
     const adj: QQButton[] = []
     if (r.d10Roll !== 3) {
       adj.push({ label: '调 d10', data: '/d10调', type: 'input', enter: true })
@@ -1117,41 +1134,49 @@ function renderRollButtons(r: RollResult): QQButton[][] {
       adj.push({ label: '调 d6', data: '/d6调', type: 'input', enter: true })
     }
     if (adj.length) rows.push(adj)
-    rows.push([
-      { label: '撤回', data: '/撤回骰点', type: 'input', enter: true },
-      {
-        label: `再投 ${r.aptName}`,
-        data: `/${r.trigger} ${r.aptName}`,
-        type: 'input',
-        enter: true,
-      },
-    ])
+    rows.push([{ label: '撤回本次骰点', data: '/撤回骰点', type: 'input', enter: true }])
     return rows
   }
-  const rows: QQButton[][] = []
-  // 第一行：成功修改
-  rows.push([
-    { label: '成功+1', data: '/增加成功 1', primary: true, type: 'input', enter: true },
-    { label: '成功-1', data: '/减少成功 1', type: 'input', enter: true },
-  ])
+  const rows: QQButton[][] = [rerollRow(r)]
+  // 第二行：成功修改；d6 入口合并到这一行，确保最复杂情况也不超过 5 行。
+  const adjustRow: QQButton[] = [
+    { label: '成功 +1', data: '/增加成功 1', type: 'input', enter: true },
+    { label: '成功 -1', data: '/减少成功 1', type: 'input', enter: true },
+  ]
+  if (r.d6Roll !== null) {
+    adjustRow.push({ label: '调整 d6', data: '/d6调', type: 'input', enter: true })
+  }
+  rows.push(adjustRow)
   // d8 = 3 / 6 时，给精确增量按钮（每行最多 3 个；d8=6 自动拆两行）
   if (r.d8Roll !== null && d8ThreeCount(r.d8Roll) > 0) {
     rows.push(...d8DeltaButtonRows(r.d8Roll, r.d8Delta))
   }
-  // d6（异常能力 + U2）调整入口
-  if (r.d6Roll !== null) {
-    rows.push([{ label: '调 d6', data: '/d6调', type: 'input', enter: true }])
-  }
-  rows.push([
-    { label: '撤回', data: '/撤回骰点', type: 'input', enter: true },
+  rows.push([{ label: '撤回本次骰点', data: '/撤回骰点', type: 'input', enter: true }])
+  return rows
+}
+
+/** d8 命令参数不使用负号，避免 Koishi 将其解析为命令选项。 */
+export function d8DeltaCommandToken(delta: number): string {
+  if (delta > 0) return `加${delta}`
+  if (delta < 0) return `减${-delta}`
+  return '忽略'
+}
+
+function rerollRow(r: Pick<RollResult, 'trigger' | 'aptName'>): QQButton[] {
+  return [
     {
-      label: `再投 ${r.aptName}`,
+      label: `再投·${truncateButtonLabel(r.aptName, 6)}`,
       data: `/${r.trigger} ${r.aptName}`,
+      primary: true,
       type: 'input',
       enter: true,
     },
-  ])
-  return rows
+    { label: '更换资质', data: `/${r.trigger}`, type: 'input', enter: true },
+  ]
+}
+
+function truncateButtonLabel(value: string, max = 10): string {
+  return value.length > max ? `${value.slice(0, max)}…` : value
 }
 
 async function reply(

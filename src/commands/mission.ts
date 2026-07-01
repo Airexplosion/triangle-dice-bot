@@ -50,9 +50,25 @@ export function registerMissionCommands(ctx: Context, deps: MissionDeps): void {
         lines.push(`参与者（${m.members.length}）`)
         for (const mem of m.members) lines.push(`- ${mem.characterName}`)
       }
-      await reply(session, deps, lines.join('\n'), [
-        [{ label: '属性', data: '/任务属性', type: 'input', enter: true }],
-      ])
+      const compositeRoomId = roomIdOf(session)
+      const room = compositeRoomId
+        ? await deps.rooms.getOrCreate(compositeRoomId, session.platform, groupId)
+        : null
+      const buttons: QQButton[][] = [
+        [
+          { label: '现实修改', data: '/现实修改', primary: true, type: 'input', enter: true },
+          { label: '异常能力', data: '/异常能力', primary: true, type: 'input', enter: true },
+        ],
+        [
+          { label: '任务属性', data: '/任务属性', type: 'input', enter: true },
+          { label: '任务报告', data: '/查看报告', type: 'input', enter: true },
+          { label: '操作菜单', data: '/菜单', type: 'input', enter: true },
+        ],
+      ]
+      if (room && isAdmin(session, room)) {
+        buttons.push([{ label: '经理面板', data: '/管理面板', type: 'input', enter: true }])
+      }
+      await reply(session, deps, lines.join('\n'), buttons)
     }),
   )
 
@@ -87,7 +103,10 @@ export function registerMissionCommands(ctx: Context, deps: MissionDeps): void {
           ['# 已进入独立任务模式', '', '骰点不会同步到网页，所有数据本地维护。'].join(
             '\n',
           ),
-          [[{ label: '属性', data: '/任务属性', type: 'input', enter: true }]],
+          [[
+            { label: '任务属性', data: '/任务属性', primary: true, type: 'input', enter: true },
+            { label: '经理面板', data: '/管理面板', type: 'input', enter: true },
+          ]],
         )
       }
 
@@ -117,13 +136,16 @@ export function registerMissionCommands(ctx: Context, deps: MissionDeps): void {
         session,
         deps,
         ['# 任务已绑定', '', `任务　**${r.missionName ?? r.missionId}**`].join('\n'),
-        [[{ label: '任务', data: '/查看任务', type: 'input', enter: true }]],
+        [[
+          { label: '任务详情', data: '/查看任务', primary: true, type: 'input', enter: true },
+          { label: '经理面板', data: '/管理面板', type: 'input', enter: true },
+        ]],
       )
     }),
   )
 
-  ctx.command('结束任务', '管理员：结束当前任务').action(
-    wrap(async ({ session }) => {
+  ctx.command('结束任务 [confirm:string]', '管理员：结束当前任务').action(
+    wrap(async ({ session }, confirm) => {
       if (!session) return
       if (session.isDirect) return reply(session, deps, GROUP_ONLY)
       const groupId = rawRoomIdOf(session)
@@ -155,6 +177,24 @@ export function registerMissionCommands(ctx: Context, deps: MissionDeps): void {
         }
       }
 
+      if (confirm?.trim() !== '确认') {
+        return reply(
+          session,
+          deps,
+          [
+            '# 确认结束任务？',
+            '',
+            `任务　**${room.missionName ?? '当前任务'}**`,
+            '',
+            '> 结束后本群将停止记录该任务的混沌与成员状态。',
+          ].join('\n'),
+          [[
+            { label: '确认结束任务', data: '/结束任务 确认', type: 'input', enter: true },
+            { label: '返回任务', data: '/查看任务', primary: true, type: 'input', enter: true },
+          ]],
+        )
+      }
+
       const oldName = room.missionName
       await deps.rooms.update(roomId, session.platform, groupId, (r) => {
         r.missionActive = false
@@ -162,12 +202,15 @@ export function registerMissionCommands(ctx: Context, deps: MissionDeps): void {
         r.missionName = null
         r.missionMembers = []
       })
-      await reply(session, deps, `> 任务「${oldName ?? '当前任务'}」已结束。`)
+      await reply(session, deps, `> 任务「${oldName ?? '当前任务'}」已结束。`, [[
+        { label: '操作菜单', data: '/菜单', primary: true, type: 'input', enter: true },
+        { label: '日志状态', data: '/log', type: 'input', enter: true },
+      ]])
     }),
   )
 
-  ctx.command('解绑任务', '管理员：解除群与网页任务的绑定').action(
-    wrap(async ({ session }) => {
+  ctx.command('解绑任务 [confirm:string]', '管理员：解除群与网页任务的绑定').action(
+    wrap(async ({ session }, confirm) => {
       if (!session) return
       if (session.isDirect) return reply(session, deps, GROUP_ONLY)
       if (!deps.web) return reply(session, deps, NO_WEB_CONFIG_BLOCK)
@@ -184,6 +227,18 @@ export function registerMissionCommands(ctx: Context, deps: MissionDeps): void {
         return reply(session, deps, '> 需要管理员权限。')
       }
 
+      if (confirm?.trim() !== '确认') {
+        return reply(
+          session,
+          deps,
+          '# 确认解绑任务？\n\n这会解除本群与网页任务的关联，但不会删除网页任务。',
+          [[
+            { label: '确认解绑任务', data: '/解绑任务 确认', type: 'input', enter: true },
+            { label: '返回经理面板', data: '/管理面板', primary: true, type: 'input', enter: true },
+          ]],
+        )
+      }
+
       const r = await deps.web.unbindMission(groupId)
       if (!r) return reply(session, deps, NETWORK_ERROR_BLOCK)
       if (!r.success) return reply(session, deps, '> 解绑失败。')
@@ -194,7 +249,10 @@ export function registerMissionCommands(ctx: Context, deps: MissionDeps): void {
         room.missionName = null
         room.missionMembers = []
       })
-      await reply(session, deps, '> 已解除群与任务的绑定。')
+      await reply(session, deps, '> 已解除群与任务的绑定。', [[
+        { label: '经理面板', data: '/管理面板', primary: true, type: 'input', enter: true },
+        { label: '操作菜单', data: '/菜单', type: 'input', enter: true },
+      ]])
     }),
   )
 }

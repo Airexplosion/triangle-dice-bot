@@ -51,10 +51,15 @@ export function registerQueryCommands(ctx: Context, deps: QueryDeps): void {
       }
       const buttons: QQButton[][] = [
         [
-          { label: '嘉奖', data: '/查询嘉奖', type: 'input', enter: true },
-          { label: '物品', data: '/查询物品', type: 'input', enter: true },
-          { label: '角色', data: '/查询角色', type: 'input', enter: true },
+          { label: '现实修改', data: '/现实修改', primary: true, type: 'input', enter: true },
+          { label: '异常能力', data: '/异常能力', primary: true, type: 'input', enter: true },
         ],
+        [
+          { label: '嘉奖', data: '/查询嘉奖', type: 'input', enter: true },
+          { label: '物品背包', data: '/查询物品', type: 'input', enter: true },
+          { label: '切换角色', data: '/查询角色', type: 'input', enter: true },
+        ],
+        [{ label: '操作菜单', data: '/菜单', type: 'input', enter: true }],
       ]
       await reply(session, deps, lines.join('\n'), buttons)
     }),
@@ -83,12 +88,16 @@ export function registerQueryCommands(ctx: Context, deps: QueryDeps): void {
           `MVP　**${c.mvpCount}**`,
           `察看期　**${c.probationCount}**`,
         ].join('\n'),
+        [[
+          { label: '返回角色状态', data: '/查询状态', primary: true, type: 'input', enter: true },
+          { label: '操作菜单', data: '/菜单', type: 'input', enter: true },
+        ]],
       )
     }),
   )
 
   ctx
-    .command('查询物品 [name:string]', '查看物品列表 / 单件详情')
+    .command('查询物品 [name:text]', '查看物品列表 / 单件详情')
     .option('page', '-p [page:posint] 列表分页')
     .action(
       wrap(async ({ session, options }, name) => {
@@ -120,7 +129,10 @@ export function registerQueryCommands(ctx: Context, deps: QueryDeps): void {
             lines.push('')
           }
           return reply(session, deps, lines.join('\n').trimEnd(), [
-            [{ label: '返回', data: '/查询物品', type: 'input', enter: true }],
+            [
+              { label: '返回物品列表', data: '/查询物品', primary: true, type: 'input', enter: true },
+              { label: '角色状态', data: '/查询状态', type: 'input', enter: true },
+            ],
           ])
         }
 
@@ -162,19 +174,21 @@ export function registerQueryCommands(ctx: Context, deps: QueryDeps): void {
 
         const prev = Math.max(1, cur - 1)
         const next = Math.min(totalPages, cur + 1)
-        const navRow: QQButton[] = [
-          { label: '◀', data: `/查询物品 -p ${prev}`, primary: cur > 1, type: 'input', enter: true },
-          { label: '▶', data: `/查询物品 -p ${next}`, primary: cur < totalPages, type: 'input', enter: true },
-        ]
+        const navRow: QQButton[] = []
+        if (cur > 1) navRow.push({ label: '上一页', data: `/查询物品 -p ${prev}`, type: 'input', enter: true })
+        if (cur < totalPages) navRow.push({ label: '下一页', data: `/查询物品 -p ${next}`, primary: true, type: 'input', enter: true })
 
         const buttons: QQButton[][] = []
         if (numButtons.length > 0) {
-          const first = numButtons.slice(0, Math.min(3, numButtons.length))
-          const second = numButtons.slice(3)
-          buttons.push(first)
-          if (second.length > 0) buttons.push(second)
+          for (let i = 0; i < numButtons.length; i += 2) {
+            buttons.push(numButtons.slice(i, i + 2))
+          }
         }
-        buttons.push(navRow)
+        if (navRow.length) buttons.push(navRow)
+        buttons.push([
+          { label: '角色状态', data: '/查询状态', type: 'input', enter: true },
+          { label: '操作菜单', data: '/菜单', type: 'input', enter: true },
+        ])
 
         await reply(session, deps, lines.join('\n').trimEnd(), buttons)
       }),
@@ -212,8 +226,8 @@ export function registerQueryCommands(ctx: Context, deps: QueryDeps): void {
           `# 我的角色（${cur} / ${totalPages} 页）`,
           '',
         ]
-        slice.forEach((c) => {
-          const idx = start + r.characters!.indexOf(c) + 1
+        slice.forEach((c, i) => {
+          const idx = start + i + 1
           const flags: string[] = []
           if (c.isActive) flags.push('当前')
           if (c.isMissionMember) flags.push('在任务')
@@ -227,7 +241,7 @@ export function registerQueryCommands(ctx: Context, deps: QueryDeps): void {
         })
 
         const numButtons: QQButton[] = slice.map((c, i) => ({
-          label: String(start + i + 1),
+          label: truncateLabel(c.name, 8),
           data: `/切换角色 ${start + i + 1}`,
           primary: c.isActive,
           type: 'input',
@@ -236,19 +250,21 @@ export function registerQueryCommands(ctx: Context, deps: QueryDeps): void {
 
         const prevPage = Math.max(1, cur - 1)
         const nextPage = Math.min(totalPages, cur + 1)
-        const navRow: QQButton[] = [
-          { label: '◀', data: `/查询角色 ${prevPage}`, primary: cur > 1, type: 'input', enter: true },
-          { label: '▶', data: `/查询角色 ${nextPage}`, primary: cur < totalPages, type: 'input', enter: true },
-        ]
+        const navRow: QQButton[] = []
+        if (cur > 1) navRow.push({ label: '上一页', data: `/查询角色 ${prevPage}`, type: 'input', enter: true })
+        if (cur < totalPages) navRow.push({ label: '下一页', data: `/查询角色 ${nextPage}`, primary: true, type: 'input', enter: true })
 
         const buttons: QQButton[][] = []
         if (numButtons.length > 0) {
-          const firstRow = numButtons.slice(0, 3)
-          const secondRow = numButtons.slice(3)
-          buttons.push(firstRow)
-          if (secondRow.length > 0) buttons.push(secondRow)
+          for (let i = 0; i < numButtons.length; i += 2) {
+            buttons.push(numButtons.slice(i, i + 2))
+          }
         }
-        buttons.push(navRow)
+        if (navRow.length) buttons.push(navRow)
+        buttons.push([
+          { label: '角色状态', data: '/查询状态', type: 'input', enter: true },
+          { label: '操作菜单', data: '/菜单', type: 'input', enter: true },
+        ])
 
         await reply(session, deps, lines.join('\n').trimEnd(), buttons)
       }),
@@ -291,7 +307,16 @@ export function registerQueryCommands(ctx: Context, deps: QueryDeps): void {
         session,
         deps,
         ['# 已切换角色', '', `当前　**${r.characterName}**`].join('\n'),
-        [[{ label: '状态', data: '/查询状态', type: 'input', enter: true }]],
+        [
+          [
+            { label: '现实修改', data: '/现实修改', primary: true, type: 'input', enter: true },
+            { label: '异常能力', data: '/异常能力', primary: true, type: 'input', enter: true },
+          ],
+          [
+            { label: '角色状态', data: '/查询状态', type: 'input', enter: true },
+            { label: '角色列表', data: '/查询角色', type: 'input', enter: true },
+          ],
+        ],
       )
     }),
   )

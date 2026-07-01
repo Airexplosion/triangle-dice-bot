@@ -56,8 +56,12 @@ export function registerBindCommands(ctx: Context, deps: BindDeps): void {
       }
       const buttons: QQButton[][] = [
         [
-          { label: '状态', data: '/查询状态', type: 'input', enter: true },
-          { label: '角色', data: '/查询角色', type: 'input', enter: true },
+          { label: '现实修改', data: '/现实修改', primary: true, type: 'input', enter: true },
+          { label: '异常能力', data: '/异常能力', primary: true, type: 'input', enter: true },
+        ],
+        [
+          { label: '角色状态', data: '/查询状态', type: 'input', enter: true },
+          { label: '切换角色', data: '/查询角色', type: 'input', enter: true },
         ],
       ]
       await reply(
@@ -73,12 +77,24 @@ export function registerBindCommands(ctx: Context, deps: BindDeps): void {
     }),
   )
 
-  ctx.command('解绑', '解除 QQ 绑定').action(
-    wrap(async ({ session }) => {
+  ctx.command('解绑 [confirm:string]', '解除 QQ 绑定').action(
+    wrap(async ({ session }, confirm) => {
       if (!session) return
       if (!deps.web) return reply(session, deps, NO_WEB_CONFIG_BLOCK)
       const qqOpenid = session.userId
       if (!qqOpenid) return reply(session, deps, NO_QQ_ID)
+
+      if (confirm?.trim() !== '确认') {
+        return reply(
+          session,
+          deps,
+          '# 确认解除绑定？\n\n解除后机器人将无法读取你的角色卡，网页数据不会被删除。',
+          [[
+            { label: '确认解除绑定', data: '/解绑 确认', type: 'input', enter: true },
+            { label: '取消', data: '/查询绑定', primary: true, type: 'input', enter: true },
+          ]],
+        )
+      }
 
       const r = await deps.web.unbindUser(qqOpenid)
       if (!r) return reply(session, deps, NETWORK_ERROR_BLOCK)
@@ -89,7 +105,9 @@ export function registerBindCommands(ctx: Context, deps: BindDeps): void {
           '> 解绑失败：可能当前 QQ 未绑定任何账号。先用 `查询绑定` 看一下状态。',
         )
       }
-      await reply(session, deps, '> 已解除 QQ 绑定。')
+      await reply(session, deps, '> 已解除 QQ 绑定。', [
+        [{ label: '重新填写绑定码', data: '绑定 ', type: 'input' }],
+      ])
     }),
   )
 
@@ -125,6 +143,16 @@ export function registerBindCommands(ctx: Context, deps: BindDeps): void {
         ['# 绑定状态', '', `账号　**${r.name ?? r.username ?? '已绑定'}**`].join(
           '\n',
         ),
+        [
+          [
+            { label: '角色状态', data: '/查询状态', primary: true, type: 'input', enter: true },
+            { label: '切换角色', data: '/查询角色', type: 'input', enter: true },
+          ],
+          [
+            { label: '操作菜单', data: '/菜单', type: 'input', enter: true },
+            { label: '解除绑定', data: '/解绑', type: 'input', enter: true },
+          ],
+        ],
       )
     }),
   )

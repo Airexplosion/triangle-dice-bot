@@ -101,6 +101,7 @@ export function registerLogCommands(ctx: Context, deps: LogDeps): void {
             session,
             deps,
             [`# 📓 日志已开始`, '', `名称　**${logName}**`, '', '此后本群发言与骰点都会被记录。', '`/log off` 暂停 · `/log end` 结束并出链接'].join('\n'),
+            logButtons('recording'),
           )
         }
 
@@ -110,7 +111,7 @@ export function registerLogCommands(ctx: Context, deps: LogDeps): void {
         case '继续': {
           const r = await store.resume(roomId, name || undefined)
           if (!r.ok) return reply(session, deps, `> ${r.reason}`)
-          return reply(session, deps, `> ▶️ 已开始记录日志「${r.row?.name}」。`)
+          return reply(session, deps, `> ▶️ 已开始记录日志「${r.row?.name}」。`, logButtons('recording'))
         }
 
         case 'off':
@@ -118,26 +119,46 @@ export function registerLogCommands(ctx: Context, deps: LogDeps): void {
         case '暂停': {
           const row = await store.pause(roomId)
           if (!row) return reply(session, deps, '> 当前没有正在记录的日志。')
-          return reply(session, deps, `> ⏸️ 已暂停日志「${row.name}」。\`/log on\` 继续 · \`/log end\` 结束。`)
+          return reply(
+            session,
+            deps,
+            `> ⏸️ 已暂停日志「${row.name}」。`,
+            logButtons('paused'),
+          )
         }
 
         case 'end':
         case 'stop':
         case '结束': {
+          const current = await store.current(roomId)
+          if (!current) return reply(session, deps, '> 当前没有进行中的日志。', logButtons('inactive'))
+          if (name !== '确认') {
+            return reply(
+              session,
+              deps,
+              `# 确认结束日志？\n\n日志　**${current.name}**\n\n> 结束后不能继续追加记录。`,
+              [[
+                { label: '确认结束并生成链接', data: '/log end 确认', type: 'input', enter: true },
+                { label: '返回日志状态', data: '/log', primary: true, type: 'input', enter: true },
+              ]],
+            )
+          }
           const row = await store.end(roomId)
-          if (!row) return reply(session, deps, '> 当前没有进行中的日志。')
+          if (!row) return reply(session, deps, '> 当前没有进行中的日志。', logButtons('inactive'))
           const link = await uploadAndLink(deps, groupId, row)
           if (!link) {
             return reply(
               session,
               deps,
               `> ⏹️ 日志「${row.name}」已结束，但上传染色页失败（网络/服务）。可稍后 \`/log get ${row.name}\` 重试。`,
+              logButtons('inactive'),
             )
           }
           return reply(
             session,
             deps,
             [`# ⏹️ 日志已结束`, '', `名称　**${row.name}**`, '', `染色回放：`, link].join('\n'),
+            logButtons('inactive'),
           )
         }
 
@@ -152,23 +173,35 @@ export function registerLogCommands(ctx: Context, deps: LogDeps): void {
           }
           if (!row) return reply(session, deps, '> 没找到日志。用 `/log list` 查看本群日志。')
           if (row.url) {
-            return reply(session, deps, [`# 📓 ${row.name}`, '', `染色回放：`, row.url].join('\n'))
+            return reply(
+              session,
+              deps,
+              [`# 📓 ${row.name}`, '', `染色回放：`, row.url].join('\n'),
+              [[
+                { label: '日志列表', data: '/log list', type: 'input', enter: true },
+                { label: '操作菜单', data: '/菜单', type: 'input', enter: true },
+              ]],
+            )
           }
           const link = await uploadAndLink(deps, groupId, row)
           if (!link) return reply(session, deps, NETWORK_ERROR_BLOCK)
-          return reply(session, deps, [`# 📓 ${row.name}`, '', `染色回放：`, link].join('\n'))
+          return reply(session, deps, [`# 📓 ${row.name}`, '', `染色回放：`, link].join('\n'), [[
+            { label: '日志列表', data: '/log list', type: 'input', enter: true },
+            { label: '操作菜单', data: '/菜单', type: 'input', enter: true },
+          ]])
         }
 
         case 'list':
         case '列表': {
           const all = await store.list(roomId)
-          if (!all.length) return reply(session, deps, '> 本群还没有任何日志。`/log new` 开始一份。')
+          if (!all.length) return reply(session, deps, '> 本群还没有任何日志。', logButtons('inactive'))
           const lines = ['# 📚 本群日志', '']
           for (const r of all.slice(0, 15)) {
             lines.push(`· **${r.name}**　${statusLabel(r.status)}${r.url ? ' · 有链接' : ''}`)
           }
           if (all.length > 15) lines.push(`…… 共 ${all.length} 份`)
-          return reply(session, deps, lines.join('\n'))
+          const current = await store.current(roomId)
+          return reply(session, deps, lines.join('\n'), logButtons(current?.status ?? 'inactive'))
         }
 
         case 'del':
@@ -180,7 +213,7 @@ export function registerLogCommands(ctx: Context, deps: LogDeps): void {
         }
 
         default:
-          return reply(session, deps, helpText())
+          return reply(session, deps, helpText(), logButtons('inactive'))
       }
     },
   )
@@ -219,7 +252,7 @@ async function uploadAndLink(
 async function showStatus(session: Session, deps: LogDeps, roomId: string): Promise<void> {
   const cur = await deps.store.current(roomId)
   if (!cur) {
-    return reply(session, deps, helpText())
+    return reply(session, deps, helpText(), logButtons('inactive'))
   }
   const n = await deps.store.countLines(cur.id)
   await reply(
@@ -234,7 +267,30 @@ async function showStatus(session: Session, deps: LogDeps, roomId: string): Prom
       '',
       cur.status === 'recording' ? '`/log off` 暂停 · `/log end` 结束' : '`/log on` 继续 · `/log end` 结束',
     ].join('\n'),
+    logButtons(cur.status),
   )
+}
+
+function logButtons(status: 'recording' | 'paused' | 'ended' | 'inactive'): QQButton[][] {
+  if (status === 'recording') {
+    return [[
+      { label: '暂停记录', data: '/log off', primary: true, type: 'input', enter: true },
+      { label: '结束并生成链接', data: '/log end', type: 'input', enter: true },
+      { label: '日志列表', data: '/log list', type: 'input', enter: true },
+    ]]
+  }
+  if (status === 'paused') {
+    return [[
+      { label: '继续记录', data: '/log on', primary: true, type: 'input', enter: true },
+      { label: '结束并生成链接', data: '/log end', type: 'input', enter: true },
+      { label: '日志列表', data: '/log list', type: 'input', enter: true },
+    ]]
+  }
+  return [[
+    { label: '快速新建', data: '/log new', primary: true, type: 'input', enter: true },
+    { label: '命名新建', data: '/log new ', type: 'input' },
+    { label: '日志列表', data: '/log list', type: 'input', enter: true },
+  ]]
 }
 
 function helpText(): string {
