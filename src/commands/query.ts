@@ -1,7 +1,7 @@
 import type { Context, Session } from 'koishi'
 import { APTITUDE_NAMES } from '../const'
 import { rawRoomIdOf } from '../room'
-import type { WebClient } from '../service/web-client'
+import type { CharacterStatusResp, WebClient } from '../service/web-client'
 import { NETWORK_ERROR_BLOCK } from '../util/messages'
 import { sendQQMarkdown, type QQButton } from '../util/qq-markdown'
 import { requireBound } from '../util/preconditions'
@@ -16,7 +16,7 @@ export interface QueryDeps {
 export function registerQueryCommands(ctx: Context, deps: QueryDeps): void {
   const wrap = makeWrap(ctx, deps.useMarkdown)
 
-  ctx.command('查询状态', '查看完整角色卡状态').alias('查询角色卡').action(
+  ctx.command('查询状态', '查看角色摘要').action(
     wrap(async ({ session }) => {
       if (!session) return
       if (!(await requireBound(session, deps))) return
@@ -43,51 +43,59 @@ export function registerQueryCommands(ctx: Context, deps: QueryDeps): void {
       if (c.managerName) lines.push(`经理　**${c.managerName}**`)
       if (c.activeMission) lines.push(`当前任务　**${c.activeMission.name}**`)
       lines.push('')
-      lines.push('## 资质（当前 / 上限）')
-      for (const name of APTITUDE_NAMES) {
-        const aptitude = c.aptitudes?.[name]
-        lines.push(`**${name}**　当前 **${aptitude?.current ?? 0}**　上限 **${aptitude?.max ?? 0}**`)
-      }
-      lines.push('')
-      lines.push(`## 异常能力（${c.anomalies?.length ?? 0}）`)
-      if (c.anomalies?.length) {
-        for (const anomaly of c.anomalies) {
-          const meta = [anomaly.qualName, anomaly.trained ? '熟练' : '未熟练'].filter(Boolean).join(' · ')
-          lines.push(`- **${anomaly.name}**${meta ? `　${meta}` : ''}`)
-        }
-      } else lines.push('暂无')
-      lines.push('')
-      lines.push(`## 关系（${c.relations?.length ?? 0}）`)
-      if (c.relations?.length) {
-        for (const relation of c.relations) {
-          lines.push(`- **${relation.name}**　连结 ${relation.level}${relation.inNetwork ? ' · 关系网内' : ''}`)
-        }
-      } else lines.push('暂无')
-      if (c.items.length > 0) {
-        lines.push('')
-        lines.push(`物品（${c.items.length}）`)
-        for (const it of c.items.slice(0, 5)) {
-          lines.push(`- ${it.name}`)
-        }
-        if (c.items.length > 5) lines.push(`…还有 ${c.items.length - 5} 件`)
-      }
+      lines.push(`资质　**${Object.keys(c.aptitudes ?? {}).length}** 项`)
+      lines.push(`异常能力　**${c.anomalies?.length ?? 0}** 项　关系　**${c.relations?.length ?? 0}** 项`)
+      lines.push(`申领物　**${c.items?.length ?? 0}** 件`)
       const buttons: QQButton[][] = [
         [
           { label: '现实修改', data: '/现实修改', primary: true, type: 'input', enter: true },
           { label: '异常能力', data: '/异常能力', primary: true, type: 'input', enter: true },
         ],
         [
-          { label: '资质', data: '/查询资质', type: 'input', enter: true },
-          { label: '异常能力', data: '/查询异常能力', type: 'input', enter: true },
-          { label: '关系', data: '/查询关系', type: 'input', enter: true },
-        ],
-        [
-          { label: '嘉奖', data: '/查询嘉奖', type: 'input', enter: true },
+          { label: '完整角色卡', data: '/查询角色卡', primary: true, type: 'input', enter: true },
           { label: '物品背包', data: '/查询物品', type: 'input', enter: true },
           { label: '切换角色', data: '/查询角色', type: 'input', enter: true },
         ],
-        [{ label: '操作菜单', data: '/菜单', type: 'input', enter: true }],
+        [
+          { label: '嘉奖', data: '/查询嘉奖', type: 'input', enter: true },
+          { label: '操作菜单', data: '/菜单', type: 'input', enter: true },
+        ],
       ]
+      await reply(session, deps, lines.join('\n'), buttons)
+    }),
+  )
+
+  ctx.command('查询角色卡 [page:posint]', '分页查看完整角色卡').action(
+    wrap(async ({ session }, page) => {
+      if (!session) return
+      const c = await fetchCharacter(session, deps)
+      if (!c) return
+
+      const pages = buildCharacterCardPages(c)
+      const requested = page ?? 1
+      const current = Math.max(1, Math.min(requested, pages.length))
+      const cardPage = pages[current - 1]
+      const lines = [
+        `# ${c.name} · 角色卡`,
+        '',
+        `> ${cardPage.label}　${current} / ${pages.length} 页`,
+        '',
+        ...cardPage.lines,
+      ]
+
+      const nav: QQButton[] = []
+      if (current > 1) {
+        nav.push({ label: '上一页', data: `/查询角色卡 ${current - 1}`, type: 'input', enter: true })
+      }
+      if (current < pages.length) {
+        nav.push({ label: '下一页', data: `/查询角色卡 ${current + 1}`, primary: true, type: 'input', enter: true })
+      }
+      const buttons: QQButton[][] = []
+      if (nav.length) buttons.push(nav)
+      buttons.push([
+        { label: '角色摘要', data: '/查询状态', type: 'input', enter: true },
+        { label: '操作菜单', data: '/菜单', type: 'input', enter: true },
+      ])
       await reply(session, deps, lines.join('\n'), buttons)
     }),
   )
@@ -103,7 +111,7 @@ export function registerQueryCommands(ctx: Context, deps: QueryDeps): void {
         lines.push(`**${name}**　当前 **${aptitude?.current ?? 0}**　上限 **${aptitude?.max ?? 0}**`)
       }
       await reply(session, deps, lines.join('\n'), [[
-        { label: '返回角色卡', data: '/查询状态', primary: true, type: 'input', enter: true },
+        { label: '返回角色卡', data: '/查询角色卡', primary: true, type: 'input', enter: true },
         { label: '录入资质', data: '录入资质 ', type: 'input' },
       ]])
     }),
@@ -123,7 +131,7 @@ export function registerQueryCommands(ctx: Context, deps: QueryDeps): void {
         lines.push('')
       }
       await reply(session, deps, lines.join('\n').trimEnd(), [[
-        { label: '返回角色卡', data: '/查询状态', primary: true, type: 'input', enter: true },
+        { label: '返回角色卡', data: '/查询角色卡', primary: true, type: 'input', enter: true },
         { label: '异常检定', data: '/异常能力', type: 'input', enter: true },
       ]])
     }),
@@ -144,7 +152,7 @@ export function registerQueryCommands(ctx: Context, deps: QueryDeps): void {
         lines.push('')
       }
       await reply(session, deps, lines.join('\n').trimEnd(), [[
-        { label: '返回角色卡', data: '/查询状态', primary: true, type: 'input', enter: true },
+        { label: '返回角色卡', data: '/查询角色卡', primary: true, type: 'input', enter: true },
         { label: '物品背包', data: '/查询物品', type: 'input', enter: true },
       ]])
     }),
@@ -405,6 +413,75 @@ export function registerQueryCommands(ctx: Context, deps: QueryDeps): void {
       )
     }),
   )
+}
+
+type CharacterData = NonNullable<CharacterStatusResp['character']>
+
+export interface CharacterCardPage {
+  label: string
+  lines: string[]
+}
+
+/** 将完整角色卡按栏目分页；长列表继续拆成多个子页。 */
+export function buildCharacterCardPages(c: CharacterData): CharacterCardPage[] {
+  const pages: CharacterCardPage[] = []
+
+  const basic = [
+    `异常　**${c.anomaly}**`,
+    `现实　**${c.reality}**`,
+    `职能　**${c.competency}**`,
+    '',
+    `嘉奖　**${c.commendations}**　申诫　**${c.reprimands}**`,
+    `MVP　**${c.mvpCount}**　察看期　**${c.probationCount}**`,
+  ]
+  if (c.managerName) basic.push(`经理　**${c.managerName}**`)
+  if (c.activeMission) basic.push(`当前任务　**${c.activeMission.name}**`)
+  pages.push({ label: '基础信息', lines: basic })
+
+  pages.push({
+    label: '资质（当前 / 上限）',
+    lines: APTITUDE_NAMES.map((name) => {
+      const aptitude = c.aptitudes?.[name]
+      return `**${name}**　当前 **${aptitude?.current ?? 0}**　上限 **${aptitude?.max ?? 0}**`
+    }),
+  })
+
+  const anomalyLines = (c.anomalies ?? []).map((anomaly) => {
+    const meta = [anomaly.qualName ?? '未指定资质', anomaly.trained ? '熟练' : '未熟练'].join(' · ')
+    return `- **${anomaly.name}**　${meta}`
+  })
+  pushListPages(pages, '异常能力', anomalyLines, '> 暂无异常能力。')
+
+  const relationLines = (c.relations ?? []).map((relation) =>
+    `- **${relation.name}**　连结 **${relation.level}**${relation.inNetwork ? ' · 关系网内' : ''}`,
+  )
+  pushListPages(pages, '关系', relationLines, '> 暂无关系。')
+
+  const itemLines = (c.items ?? []).map((item, index) => `**${index + 1}. ${item.name}**`)
+  pushListPages(pages, '申领物', itemLines, '> 暂无申领物。')
+
+  return pages
+}
+
+function pushListPages(
+  pages: CharacterCardPage[],
+  label: string,
+  lines: string[],
+  emptyLine: string,
+  pageSize = 6,
+): void {
+  if (lines.length === 0) {
+    pages.push({ label, lines: [emptyLine] })
+    return
+  }
+  const count = Math.ceil(lines.length / pageSize)
+  for (let index = 0; index < count; index++) {
+    const suffix = count > 1 ? ` ${index + 1}/${count}` : ''
+    pages.push({
+      label: `${label}${suffix}`,
+      lines: lines.slice(index * pageSize, (index + 1) * pageSize),
+    })
+  }
 }
 
 async function fetchCharacter(session: Session, deps: QueryDeps) {
