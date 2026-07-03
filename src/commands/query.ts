@@ -1,4 +1,5 @@
 import type { Context, Session } from 'koishi'
+import { APTITUDE_NAMES } from '../const'
 import { rawRoomIdOf } from '../room'
 import type { WebClient } from '../service/web-client'
 import { NETWORK_ERROR_BLOCK } from '../util/messages'
@@ -15,7 +16,7 @@ export interface QueryDeps {
 export function registerQueryCommands(ctx: Context, deps: QueryDeps): void {
   const wrap = makeWrap(ctx, deps.useMarkdown)
 
-  ctx.command('查询状态', '查看角色信息').action(
+  ctx.command('查询状态', '查看完整角色卡状态').alias('查询角色卡').action(
     wrap(async ({ session }) => {
       if (!session) return
       if (!(await requireBound(session, deps))) return
@@ -41,6 +42,27 @@ export function registerQueryCommands(ctx: Context, deps: QueryDeps): void {
       lines.push(`MVP　**${c.mvpCount}**　察看期　**${c.probationCount}**`)
       if (c.managerName) lines.push(`经理　**${c.managerName}**`)
       if (c.activeMission) lines.push(`当前任务　**${c.activeMission.name}**`)
+      lines.push('')
+      lines.push('## 资质（当前 / 上限）')
+      for (const name of APTITUDE_NAMES) {
+        const aptitude = c.aptitudes?.[name]
+        lines.push(`**${name}**　当前 **${aptitude?.current ?? 0}**　上限 **${aptitude?.max ?? 0}**`)
+      }
+      lines.push('')
+      lines.push(`## 异常能力（${c.anomalies?.length ?? 0}）`)
+      if (c.anomalies?.length) {
+        for (const anomaly of c.anomalies) {
+          const meta = [anomaly.qualName, anomaly.trained ? '熟练' : '未熟练'].filter(Boolean).join(' · ')
+          lines.push(`- **${anomaly.name}**${meta ? `　${meta}` : ''}`)
+        }
+      } else lines.push('暂无')
+      lines.push('')
+      lines.push(`## 关系（${c.relations?.length ?? 0}）`)
+      if (c.relations?.length) {
+        for (const relation of c.relations) {
+          lines.push(`- **${relation.name}**　连结 ${relation.level}${relation.inNetwork ? ' · 关系网内' : ''}`)
+        }
+      } else lines.push('暂无')
       if (c.items.length > 0) {
         lines.push('')
         lines.push(`物品（${c.items.length}）`)
@@ -55,6 +77,11 @@ export function registerQueryCommands(ctx: Context, deps: QueryDeps): void {
           { label: '异常能力', data: '/异常能力', primary: true, type: 'input', enter: true },
         ],
         [
+          { label: '资质', data: '/查询资质', type: 'input', enter: true },
+          { label: '异常能力', data: '/查询异常能力', type: 'input', enter: true },
+          { label: '关系', data: '/查询关系', type: 'input', enter: true },
+        ],
+        [
           { label: '嘉奖', data: '/查询嘉奖', type: 'input', enter: true },
           { label: '物品背包', data: '/查询物品', type: 'input', enter: true },
           { label: '切换角色', data: '/查询角色', type: 'input', enter: true },
@@ -62,6 +89,64 @@ export function registerQueryCommands(ctx: Context, deps: QueryDeps): void {
         [{ label: '操作菜单', data: '/菜单', type: 'input', enter: true }],
       ]
       await reply(session, deps, lines.join('\n'), buttons)
+    }),
+  )
+
+  ctx.command('查询资质', '查看九项资质的当前值与上限').action(
+    wrap(async ({ session }) => {
+      if (!session) return
+      const c = await fetchCharacter(session, deps)
+      if (!c) return
+      const lines = [`# ${c.name} · 资质`, '', '> 当前值 / 上限均明确列出。', '']
+      for (const name of APTITUDE_NAMES) {
+        const aptitude = c.aptitudes?.[name]
+        lines.push(`**${name}**　当前 **${aptitude?.current ?? 0}**　上限 **${aptitude?.max ?? 0}**`)
+      }
+      await reply(session, deps, lines.join('\n'), [[
+        { label: '返回角色卡', data: '/查询状态', primary: true, type: 'input', enter: true },
+        { label: '录入资质', data: '录入资质 ', type: 'input' },
+      ]])
+    }),
+  )
+
+  ctx.command('查询异常能力', '查看当前角色的异常能力').alias('查询异常').action(
+    wrap(async ({ session }) => {
+      if (!session) return
+      const c = await fetchCharacter(session, deps)
+      if (!c) return
+      const lines = [`# ${c.name} · 异常能力`, '']
+      if (!c.anomalies?.length) lines.push('> 暂无异常能力。')
+      for (const anomaly of c.anomalies ?? []) {
+        lines.push(`**${anomaly.name}**`)
+        lines.push(`资质　${anomaly.qualName ?? '未指定'}　状态　${anomaly.trained ? '熟练' : '未熟练'}`)
+        if (anomaly.trigger) lines.push(`触发器　${anomaly.trigger}`)
+        lines.push('')
+      }
+      await reply(session, deps, lines.join('\n').trimEnd(), [[
+        { label: '返回角色卡', data: '/查询状态', primary: true, type: 'input', enter: true },
+        { label: '异常检定', data: '/异常能力', type: 'input', enter: true },
+      ]])
+    }),
+  )
+
+  ctx.command('查询关系', '查看当前角色的关系与连结').action(
+    wrap(async ({ session }) => {
+      if (!session) return
+      const c = await fetchCharacter(session, deps)
+      if (!c) return
+      const lines = [`# ${c.name} · 关系`, '']
+      if (!c.relations?.length) lines.push('> 暂无关系。')
+      for (const relation of c.relations ?? []) {
+        lines.push(`**${relation.name}**　连结 **${relation.level}**${relation.inNetwork ? '　关系网内' : ''}`)
+        if (relation.actor) lines.push(`扮演者　${relation.actor}`)
+        const connection = sanitizeRichText(relation.connection)
+        if (connection) lines.push(`连结加成　${connection}`)
+        lines.push('')
+      }
+      await reply(session, deps, lines.join('\n').trimEnd(), [[
+        { label: '返回角色卡', data: '/查询状态', primary: true, type: 'input', enter: true },
+        { label: '物品背包', data: '/查询物品', type: 'input', enter: true },
+      ]])
     }),
   )
 
@@ -320,6 +405,21 @@ export function registerQueryCommands(ctx: Context, deps: QueryDeps): void {
       )
     }),
   )
+}
+
+async function fetchCharacter(session: Session, deps: QueryDeps) {
+  if (!(await requireBound(session, deps))) return null
+  const groupId = session.isDirect ? undefined : rawRoomIdOf(session) ?? undefined
+  const result = await deps.web!.getCharacterStatus(session.userId!, groupId)
+  if (!result) {
+    await reply(session, deps, NETWORK_ERROR_BLOCK)
+    return null
+  }
+  if (!result.success || !result.character) {
+    await reply(session, deps, `> ${result.error ?? '查询失败'}`)
+    return null
+  }
+  return result.character
 }
 
 async function reply(

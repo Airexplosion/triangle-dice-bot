@@ -8,7 +8,7 @@ import type { WebClient } from '../service/web-client'
 import { isAdmin } from '../util/auth'
 import { sendQQMarkdown, type QQButton } from '../util/qq-markdown'
 import { registerAdminCommands } from './admin'
-import { registerAptitudeCommand } from './aptitude'
+import { normalizeAptitudeCommandContent, registerAptitudeCommand } from './aptitude'
 import { registerAuditCommands } from './audit'
 import { registerLogCommands } from './log'
 import { registerBindCommands } from './bind'
@@ -49,7 +49,7 @@ const OUR_COMMAND_NAMES: ReadonlySet<string> = new Set([
   '录入资质',
   '任务属性', '调整属性', '管理面板', '混沌增加', '混沌减少', '失败增加', '失败减少', '散逸增加', '散逸减少',
   '注册管理', '申请管理', '同意管理',
-  '绑定', '解绑', '查询绑定', '查询状态', '查询嘉奖', '查询物品', '查询角色', '切换角色',
+  '绑定', '解绑', '查询绑定', '查询状态', '查询角色卡', '查询资质', '查询异常能力', '查询异常', '查询关系', '查询嘉奖', '查询物品', '查询角色', '切换角色',
   '查看任务', '开始任务', '结束任务', '解绑任务',
   '查看报告', '通过报告', '申诉报告',
   'info', '经理审核', '分部审核',
@@ -82,6 +82,7 @@ export function registerCommands(ctx: Context, deps: CommandDeps): void {
           session.content = cleaned
         }
       }
+      session.content = normalizeAptitudeCommandContent(session.content ?? '')
     }
     return next()
   }, true /* prepend，确保比命令分发更早跑 */)
