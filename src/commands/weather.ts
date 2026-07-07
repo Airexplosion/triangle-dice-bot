@@ -18,9 +18,13 @@ export function registerWeatherCommands(ctx: Context, deps: WeatherDeps): void {
   const wrap = makeWrap(ctx, deps.useMarkdown)
 
   ctx
-    .command('骰天气 [pickIdx:number]', '骰 1D20 天气（abc 组需再挑一张）')
+    // 位置参数:
+    //   /骰天气             → 后端 1D20 随机
+    //   /骰天气 <group>     → (调试用) forceGroup 强制骰某组
+    //   /骰天气 <group> <idx> → abc 组按钮回调, group 固定 + 选中 idx (0/1/2)
+    .command('骰天气 [group:number] [pickIdx:number]', '骰 1D20 天气（abc 组需再挑一张）')
     .action(
-      wrap(async ({ session }, pickIdx) => {
+      wrap(async ({ session }, group, pickIdx) => {
         if (!session) return
         if (session.isDirect) return reply(session, deps, '> 私聊不支持天气骰点。')
         if (!deps.web) return reply(session, deps, NO_WEB_CONFIG_BLOCK)
@@ -28,36 +32,32 @@ export function registerWeatherCommands(ctx: Context, deps: WeatherDeps): void {
         if (!rawRoomId) return reply(session, deps, '> 无法定位群号。')
         const qqOpenid = session.userId ?? undefined
 
-        const idx = typeof pickIdx === 'number' && pickIdx >= 0 && pickIdx <= 2 ? pickIdx : undefined
-        const r = await deps.web.rollWeather(rawRoomId, qqOpenid, idx)
+        const forceGroup =
+          typeof group === 'number' && group >= 1 && group <= 20 ? group : undefined
+        const idx =
+          typeof pickIdx === 'number' && pickIdx >= 0 && pickIdx <= 2 ? pickIdx : undefined
+
+        const r = await deps.web.rollWeather(rawRoomId, qqOpenid, idx, forceGroup)
         if (!r) return reply(session, deps, NETWORK_ERROR_BLOCK)
         if (!r.success) return reply(session, deps, `> ${r.error ?? '骰天气失败'}`)
 
         if (r.action === 'pending' && r.options?.length) {
-          // abc 组：弹按钮让 GM 挑
+          // abc 组：不显示卡片详情，只发按钮 (data 带 group, 避免第二次调时重骰)
           const buttons: QQButton[][] = [
-            r.options.map((_c, i) => ({
-              label: r.options![i].id.slice(-1).toUpperCase() + '　' + truncateTitle(r.options![i].title),
-              data: `骰天气 ${i}`,
+            r.options.map((c, i) => ({
+              label: c.id.slice(-1).toUpperCase() + '　' + truncateTitle(c.title),
+              data: `骰天气 ${r.group} ${i}`,
               type: 'input' as const,
               enter: true,
             })),
           ]
-          const optionsBlock = r.options
-            .map(
-              (c, i) =>
-                `**${String.fromCharCode(65 + i)}. ${c.title}** \`${c.id}\`\n> ${c.text}`,
-            )
-            .join('\n\n')
           return reply(
             session,
             deps,
             [
               `# 骰出第 ${r.group} 组`,
               '',
-              optionsBlock,
-              '',
-              '点下方按钮任选一张：',
+              '点下方按钮任选一张，选中后自动同步到网页画板。',
             ].join('\n'),
             buttons,
           )
