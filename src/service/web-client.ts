@@ -348,6 +348,30 @@ export class WebClient {
   }): Promise<LogUploadResp | null> {
     return this.postJson('/api/bot/log/upload', payload)
   }
+
+  // ─── Weather (jasonyzh 2.6 + reborndevfenUI 骰点扩展) ────────────
+
+  /**
+   * 骰 1D20 天气。abc 组第一次调返回 pending + 3 张卡；GM 手挑后传 pickSubIndex 再调一次落盘。
+   * forceGroup 用于测试或复现。
+   */
+  rollWeather(
+    qqGroupOpenid: string,
+    qqOpenid?: string,
+    pickSubIndex?: number,
+    forceGroup?: number,
+  ): Promise<WeatherRollResp | null> {
+    const body: Record<string, unknown> = { qqGroupOpenid }
+    if (qqOpenid) body.qqOpenid = qqOpenid
+    if (typeof pickSubIndex === 'number') body.pickSubIndex = pickSubIndex
+    if (typeof forceGroup === 'number') body.forceGroup = forceGroup
+    return this.postJson('/api/bot/weather-roll', body)
+  }
+
+  /** 查看当前生效的天气（含递进展开）。*/
+  getCurrentWeather(qqGroupOpenid: string): Promise<WeatherCurrentResp | null> {
+    return this.getJson('/api/bot/weather-current', { qqGroupOpenid })
+  }
 }
 
 // ─── Internal helpers ────────────────────────────────────────────
@@ -684,5 +708,33 @@ export interface LogUploadResp {
   /** 公开染色页完整链接。 */
   url?: string
   token?: string
+  error?: string
+}
+
+// ─── Weather types ──────────────────────────────────────────────
+
+export interface WeatherCard {
+  id: string
+  group: number
+  title: string
+  text: string
+}
+
+export interface WeatherRollResp {
+  success: boolean
+  action?: 'added' | 'pending'
+  missionId?: number
+  group?: number
+  /** action=added 时返回的最终选中卡 */
+  card?: WeatherCard
+  /** action=pending 时返回的 abc 3 张卡 */
+  options?: WeatherCard[]
+  error?: string
+}
+
+export interface WeatherCurrentResp {
+  success: boolean
+  missionId?: number
+  weather?: WeatherCard[]
   error?: string
 }

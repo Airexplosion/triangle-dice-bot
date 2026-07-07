@@ -18,6 +18,7 @@ import { registerPostRollCommands } from './post-roll'
 import { registerQueryCommands } from './query'
 import { registerReportCommands } from './report'
 import { characterHasHighWall, registerRollCommands } from './roll'
+import { registerWeatherCommands } from './weather'
 
 export interface CommandDeps {
   rooms: RoomStore
@@ -54,6 +55,7 @@ const OUR_COMMAND_NAMES: ReadonlySet<string> = new Set([
   '查看报告', '通过报告', '申诉报告',
   'info', '经理审核', '分部审核',
   'log', '日志',
+  '骰天气', '查天气', '当前天气',
   'triangle-migrate-json',
 ])
 
@@ -268,6 +270,9 @@ export function registerCommands(ctx: Context, deps: CommandDeps): void {
     web: deps.web,
     useMarkdown: deps.useMarkdown,
   })
+
+  // ========== 天气（/骰天气 /查天气）==========
+  registerWeatherCommands(ctx, { web: deps.web, useMarkdown: deps.useMarkdown })
 
   // ========== 维护命令：JSON → DB 一次性迁移 ==========
   registerMigrateCommand(ctx, deps)
