@@ -133,6 +133,18 @@ export class WebClient {
     })
   }
 
+  updateAptitudes(
+    qqOpenid: string,
+    qqGroupOpenid: string | null,
+    operations: AptitudeOperation[],
+  ): Promise<UpdateAptitudesResp | null> {
+    return this.postJson('/api/bot/update-aptitudes', {
+      qqOpenid,
+      qqGroupOpenid,
+      operations,
+    })
+  }
+
   // ─── Chaos / failure sync ──────────────────────────────────────
 
   syncChaos(
@@ -406,6 +418,34 @@ export interface GetAptitudesResp {
   archived?: boolean
 }
 
+export interface AptitudeValue {
+  v: string
+  current: number
+  max: number
+  m: number[]
+}
+
+export interface AptitudeOperation {
+  name: string
+  field: 'current' | 'max'
+  mode: 'set' | 'delta'
+  value: number
+}
+
+export interface AptitudeUpdateResult {
+  operation: AptitudeOperation
+  before: AptitudeValue
+  after: AptitudeValue
+}
+
+export interface UpdateAptitudesResp {
+  success: boolean
+  characterId?: string | number
+  results?: AptitudeUpdateResult[]
+  attrs?: Record<string, AptitudeValue>
+  error?: string
+}
+
 export interface CharacterStatusResp {
   success: boolean
   character?: {
@@ -420,6 +460,21 @@ export interface CharacterStatusResp {
     probationCount: number
     managerName: string | null
     activeMission: { id: number; name: string } | null
+    aptitudes: Record<string, AptitudeValue>
+    anomalies: Array<{
+      name: string
+      qualName: string | null
+      trigger: string | null
+      trained: boolean
+    }>
+    relations: Array<{
+      name: string
+      actor: string
+      description: string
+      inNetwork: boolean
+      connection: string
+      level: number
+    }>
     items: Array<{ name: string; effect: string; purchase: string }>
   }
   error?: string

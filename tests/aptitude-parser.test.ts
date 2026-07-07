@@ -1,69 +1,63 @@
 import { describe, expect, it } from 'vitest'
-import { parseAptitudeInput } from '../src/commands/aptitude'
+import {
+  normalizeAptitudeCommandContent,
+  parseAptitudeInput,
+} from '../src/commands/aptitude'
 
-/**
- * 回归测试：录入资质命令的 token 解析。
- * 玩家可能用空格、逗号、顿号分隔，可能拼错资质名。
- * 这个 parser 是命令的入口，输入容错性是体验的一部分。
- */
 describe('parseAptitudeInput', () => {
-  it('单个资质 + 数值', () => {
-    const r = parseAptitudeInput('专注3')
-    expect([...r.updates.entries()]).toEqual([['专注', 3]])
+  it('兼容旧的紧凑绝对赋值格式', () => {
+    const r = parseAptitudeInput('专注3 气场5')
+    expect(r.operations).toEqual([
+      { name: '专注', field: 'current', mode: 'set', value: 3 },
+      { name: '气场', field: 'current', mode: 'set', value: 5 },
+    ])
     expect(r.unknown).toEqual([])
   })
 
-  it('多个资质用空格分隔', () => {
-    const r = parseAptitudeInput('专注3 气场5 诡秘2')
-    expect([...r.updates.entries()].sort()).toEqual([
-      ['专注', 3],
-      ['气场', 5],
-      ['诡秘', 2],
-    ].sort())
+  it('支持资质名与绝对值之间有空格', () => {
+    expect(parseAptitudeInput('专注 8').operations).toEqual([
+      { name: '专注', field: 'current', mode: 'set', value: 8 },
+    ])
   })
 
-  it('支持中文逗号 / 顿号 / 英文逗号', () => {
-    const r = parseAptitudeInput('专注3，气场5、诡秘2,坚毅1')
-    expect(r.updates.size).toBe(4)
-    expect(r.updates.get('专注')).toBe(3)
-    expect(r.updates.get('气场')).toBe(5)
-    expect(r.updates.get('诡秘')).toBe(2)
-    expect(r.updates.get('坚毅')).toBe(1)
+  it('支持当前值的正负增量和中文加减', () => {
+    expect(parseAptitudeInput('专注-1 气场 +2 共情减1 主动加1').operations).toEqual([
+      { name: '专注', field: 'current', mode: 'delta', value: -1 },
+      { name: '气场', field: 'current', mode: 'delta', value: 2 },
+      { name: '共情', field: 'current', mode: 'delta', value: -1 },
+      { name: '主动', field: 'current', mode: 'delta', value: 1 },
+    ])
   })
 
-  it('未知资质名进 unknown 列表', () => {
-    const r = parseAptitudeInput('专注3 滚3 气场5')
-    expect(r.updates.get('专注')).toBe(3)
-    expect(r.updates.get('气场')).toBe(5)
-    expect(r.unknown).toContain('滚')
+  it('支持上限绝对值与增量', () => {
+    expect(parseAptitudeInput('专注 上限 9 气场上限-1').operations).toEqual([
+      { name: '专注', field: 'max', mode: 'set', value: 9 },
+      { name: '气场', field: 'max', mode: 'delta', value: -1 },
+    ])
   })
 
-  it('格式错误（无数字）进 unknown', () => {
-    const r = parseAptitudeInput('专注 气场5')
-    expect(r.unknown).toContain('专注')
-    expect(r.updates.get('气场')).toBe(5)
+  it('支持逗号、顿号和重复资质的顺序操作', () => {
+    const r = parseAptitudeInput('专注8，专注减1、气场5')
+    expect(r.operations.map((operation) => operation.name)).toEqual(['专注', '专注', '气场'])
   })
 
-  it('两位数及以上数值', () => {
-    const r = parseAptitudeInput('专注10 气场100')
-    expect(r.updates.get('专注')).toBe(10)
-    expect(r.updates.get('气场')).toBe(100)
+  it('未知资质和缺失数值进入 unknown', () => {
+    const r = parseAptitudeInput('滚3 专注 气场5')
+    expect(r.unknown).toEqual(['滚3', '专注'])
+    expect(r.operations).toEqual([
+      { name: '气场', field: 'current', mode: 'set', value: 5 },
+    ])
   })
 
-  it('空字符串', () => {
-    const r = parseAptitudeInput('')
-    expect(r.updates.size).toBe(0)
-    expect(r.unknown).toEqual([])
+  it('空字符串不产生操作', () => {
+    expect(parseAptitudeInput('   ')).toEqual({ operations: [], unknown: [] })
   })
+})
 
-  it('全空白', () => {
-    const r = parseAptitudeInput('   ')
-    expect(r.updates.size).toBe(0)
-    expect(r.unknown).toEqual([])
-  })
-
-  it('重复资质名 - 后面的覆盖前面', () => {
-    const r = parseAptitudeInput('专注3 专注7')
-    expect(r.updates.get('专注')).toBe(7)
+describe('normalizeAptitudeCommandContent', () => {
+  it('在 Koishi 解析前消除负数选项歧义', () => {
+    expect(normalizeAptitudeCommandContent('录入资质 专注 -1')).toBe('录入资质 专注 减1')
+    expect(normalizeAptitudeCommandContent('/录入资质 专注 −1')).toBe('/录入资质 专注 减1')
+    expect(normalizeAptitudeCommandContent('录入资质 专注－1 气场＋2')).toBe('录入资质 专注减1 气场加2')
   })
 })
