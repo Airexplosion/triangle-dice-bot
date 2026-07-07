@@ -42,20 +42,25 @@ export function registerWeatherCommands(ctx: Context, deps: WeatherDeps): void {
         if (!r.success) return reply(session, deps, `> ${r.error ?? '骰天气失败'}`)
 
         if (r.action === 'pending' && r.options?.length) {
-          // abc 组：不显示卡片详情，只发按钮 (data 带 group, 避免第二次调时重骰)
+          // abc 组：正文列出 A/B/C + 完整标题（不带详情），按钮只放字母
           const buttons: QQButton[][] = [
-            r.options.map((c, i) => ({
-              label: c.id.slice(-1).toUpperCase() + '　' + truncateTitle(c.title),
+            r.options.map((_c, i) => ({
+              label: String.fromCharCode(65 + i),
               data: `骰天气 ${r.group} ${i}`,
               type: 'input' as const,
               enter: true,
             })),
           ]
+          const list = r.options
+            .map((c, i) => `**${String.fromCharCode(65 + i)}.** ${c.title}`)
+            .join('\n')
           return reply(
             session,
             deps,
             [
               `# 骰出第 ${r.group} 组`,
+              '',
+              list,
               '',
               '点下方按钮任选一张，选中后自动同步到网页画板。',
             ].join('\n'),
