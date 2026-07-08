@@ -1,5 +1,6 @@
-import { Context, Schema } from 'koishi'
+import { Context, Schema, type Session } from 'koishi'
 import { registerCommands } from './commands'
+import { roomIdOf } from './room'
 import { defineLogModel, LogStore } from './service/log-store'
 import { PendingAdminApplications, PendingRollStore } from './service/pending'
 import { defineModel, RoomStore } from './service/store'
@@ -67,6 +68,35 @@ export function apply(ctx: Context, config: Config): void {
     )
   }
 
+  // ─────────────────────────────────────────────────────────────────────
+  // 「消息全部开放」探测（供 /log 前置检查）
+  //   QQ 官方 public 机器人：群未开启全量消息时，机器人只收得到 @它 的消息，
+  //   收不到群内普通发言 → 日志记不全。QQ 无 API 可直接查该权限，只能间接推断：
+  //   只要机器人在某群「收到过一条普通发言（非命令、非 @机器人）」，即证明该群已开放。
+  //   记忆存内存 Set，重启后需重新观察到一条自由发言（活跃群几秒内即自愈）。
+  // ─────────────────────────────────────────────────────────────────────
+  const groupsWithFreeMessages = new Set<string>()
+
+  const isAddressedToBot = (session: Session): boolean => {
+    // koishi 标准：消息 @ 了机器人或用了昵称前缀
+    const appel = (session as unknown as { stripped?: { appel?: boolean } }).stripped?.appel
+    if (appel) return true
+    const els = (session.elements ?? []) as Array<{ type?: string; attrs?: Record<string, unknown> }>
+    return els.some(
+      (e) => e?.type === 'at' && String(e?.attrs?.id ?? '') === String(session.selfId ?? ''),
+    )
+  }
+
+  const looksLikeFreeMessage = (session: Session): boolean => {
+    if (session.isDirect) return false
+    if (session.userId && session.selfId && session.userId === session.selfId) return false
+    const raw = (session.content ?? '').trim()
+    if (!raw) return false
+    if (raw.startsWith('/') || raw.startsWith('.')) return false // 命令不算
+    if (isAddressedToBot(session)) return false // @机器人 的消息不算
+    return true
+  }
+
   registerCommands(ctx, {
     rooms,
     pending,
@@ -76,6 +106,7 @@ export function apply(ctx: Context, config: Config): void {
     useMarkdown: config.useMarkdown,
     auditGroupIds: config.auditGroupIds,
     auditUserIds: config.auditUserIds,
+    hasSeenFreeMessage: (roomId: string) => groupsWithFreeMessages.has(roomId),
   })
 
   // ─────────────────────────────────────────────────────────────────────
@@ -93,6 +124,15 @@ export function apply(ctx: Context, config: Config): void {
         id: session.messageId,
         ts: Date.now(),
       })
+    }
+    // 探测本群是否已开启全量消息：收到过一条自由发言即标记为已开放
+    try {
+      if (looksLikeFreeMessage(session)) {
+        const rid = roomIdOf(session)
+        if (rid) groupsWithFreeMessages.add(rid)
+      }
+    } catch {
+      /* 探测失败不影响消息分发 */
     }
   })
 

@@ -32,6 +32,8 @@ export interface CommandDeps {
   auditGroupIds: string[]
   /** 审核白名单：允许 /经理审核 /分部审核 的用户 openid。 */
   auditUserIds: string[]
+  /** 该群是否已被观察到「收到过普通发言」→ 判定已开启全量消息（供 /log 前置检查）。 */
+  hasSeenFreeMessage?: (roomId: string) => boolean
 }
 
 /** P2/P3/P4 待实现的占位 reply（markdown）。*/
@@ -269,6 +271,7 @@ export function registerCommands(ctx: Context, deps: CommandDeps): void {
     store: deps.logs,
     web: deps.web,
     useMarkdown: deps.useMarkdown,
+    hasSeenFreeMessage: deps.hasSeenFreeMessage,
   })
 
   // ========== 天气（/骰天气 /查天气）==========

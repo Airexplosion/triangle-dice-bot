@@ -9,6 +9,8 @@ export interface LogDeps {
   store: LogStore
   web: WebClient | null
   useMarkdown: boolean
+  /** 该群是否已被观察到收到过普通发言（→ 已开启全量消息）。undefined 视为不检查。 */
+  hasSeenFreeMessage?: (roomId: string) => boolean
 }
 
 /**
@@ -79,7 +81,14 @@ export function registerLogCommands(ctx: Context, deps: LogDeps): void {
       const name = (arg ?? '').trim()
       const action = (sub ?? '').trim().toLowerCase()
 
-      switch (action) {
+      // 强制变体：跳过「消息全部开放」前置检查（由警告里的按钮触发）
+      const forced = action === '强制新建' || action === '强制继续'
+      const effAction = action === '强制新建' ? 'new' : action === '强制继续' ? 'on' : action
+      // 未观察到本群收到过普通发言 → 判定可能未开启全量消息
+      const messagesClosed = (): boolean =>
+        typeof deps.hasSeenFreeMessage === 'function' && !deps.hasSeenFreeMessage(roomId)
+
+      switch (effAction) {
         case '':
         case 'status':
         case '状态':
@@ -88,6 +97,7 @@ export function registerLogCommands(ctx: Context, deps: LogDeps): void {
         case 'new':
         case '新建': {
           const logName = name || autoName()
+          if (!forced && messagesClosed()) return warnMessagesClosed(session, deps, 'new', logName)
           const row = await store.create(roomId, logName)
           if (!row) {
             const cur = await store.current(roomId)
@@ -109,6 +119,7 @@ export function registerLogCommands(ctx: Context, deps: LogDeps): void {
         case 'start':
         case '开始':
         case '继续': {
+          if (!forced && messagesClosed()) return warnMessagesClosed(session, deps, 'on', name)
           const r = await store.resume(roomId, name || undefined)
           if (!r.ok) return reply(session, deps, `> ${r.reason}`)
           return reply(session, deps, `> ▶️ 已开始记录日志「${r.row?.name}」。`, logButtons('recording'))
@@ -394,6 +405,38 @@ function autoName(): string {
   const d = new Date()
   const p = (n: number) => String(n).padStart(2, '0')
   return `跑团-${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`
+}
+
+/** 「消息全部开放」未开启时的拦截提示 + 强制开始按钮。 */
+function warnMessagesClosed(
+  session: Session,
+  deps: LogDeps,
+  kind: 'new' | 'on',
+  name: string,
+): Promise<void> {
+  const sub = kind === 'new' ? '强制新建' : '强制继续'
+  const forceData = `/log ${sub}${name ? ' ' + name : ''}`
+  return reply(
+    session,
+    deps,
+    [
+      '# ⚠️ 暂时无法开始日志',
+      '',
+      '检测到本群**可能未开启「消息全部开放」**。',
+      '',
+      '机器人当前收不到群内普通发言，日志只能记到 @机器人 的消息和骰点结果，**无法完整记录跑团过程**。',
+      '',
+      '**请群主操作**：QQ 群设置 → 机器人 / 消息接收，给本机器人开启「接收全部消息 / 消息列表」权限，然后重试。',
+      '',
+      '> 若你确认已开启（或本群刚建、暂时无人发言导致误判），可点下方按钮强制开始。',
+    ].join('\n'),
+    [
+      [
+        { label: '我已开启，强制开始', data: forceData, primary: true, type: 'input', enter: true },
+        { label: '返回', data: '/log', type: 'input', enter: true },
+      ],
+    ],
+  )
 }
 
 async function reply(
