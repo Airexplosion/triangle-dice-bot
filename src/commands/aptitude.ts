@@ -21,7 +21,7 @@ export interface ParsedAptitudeInput {
  * 同时兼容输入法常见的 Unicode 正负号。
  */
 export function normalizeAptitudeCommandContent(content: string): string {
-  if (!/^[\s/.]*录入资质/.test(content)) return content
+  if (!/^[\s/.。]*录入资质/.test(content)) return content
   return content
     .replace(/[−－﹣]/g, '-')
     .replace(/[＋﹢]/g, '+')

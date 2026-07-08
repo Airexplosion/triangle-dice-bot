@@ -77,13 +77,15 @@ export function registerCommands(ctx: Context, deps: CommandDeps): void {
   ctx.middleware(async (session, next) => {
     const raw = session.content
     if (typeof raw === 'string') {
-      // 兼容 @bot 在前的情况：把开头连续的 < ... > element 占位 + 空白 跳过
-      const stripPrefix = raw.replace(/^(?:<[^>]+>|\s)+/g, '')
-      if (stripPrefix.startsWith('/') || stripPrefix.startsWith('.')) {
-        const cleaned = stripPrefix.slice(1).replace(/^\s+/, '')
-        const firstWord = cleaned.split(/\s+/, 1)[0]
+      // 前缀策略：命令必须带前缀 / . 。 才触发（koishi.yml prefix 已设为 ['/','.','。']，
+      // 不含空串 → 裸命令不再直接触发）。这里只处理 "@机器人 在前 + 前缀命令" 的情况：
+      // 去掉开头连续的 <...>element 占位 + 空白，若其后紧跟「前缀 + 本插件命令」，
+      // 就把 @机器人 前导去掉、保留前缀，交给 koishi 原生前缀匹配。
+      const afterAt = raw.replace(/^(?:<[^>]+>|\s)+/g, '')
+      if (afterAt !== raw && /^[/.。]/.test(afterAt)) {
+        const firstWord = afterAt.replace(/^[/.。]\s*/, '').split(/\s+/, 1)[0]
         if (firstWord && OUR_COMMAND_NAMES.has(firstWord)) {
-          session.content = cleaned
+          session.content = afterAt
         }
       }
       session.content = normalizeAptitudeCommandContent(session.content ?? '')
