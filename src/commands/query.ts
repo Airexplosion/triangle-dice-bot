@@ -112,7 +112,7 @@ export function registerQueryCommands(ctx: Context, deps: QueryDeps): void {
       }
       await reply(session, deps, lines.join('\n'), [[
         { label: '返回角色卡', data: '/查询角色卡', primary: true, type: 'input', enter: true },
-        { label: '录入资质', data: '录入资质 ', type: 'input' },
+        { label: '录入资质', data: '/录入资质 ', type: 'input' },
       ]])
     }),
   )

@@ -58,7 +58,7 @@ export function registerReportCommands(ctx: Context, deps: ReportDeps): void {
       if (rep.myStatus === 'pending') {
         buttons.push([
           { label: '接受评级', data: '/通过报告', primary: true, type: 'input', enter: true },
-          { label: '填写申诉理由', data: '申诉报告 ', type: 'input' },
+          { label: '填写申诉理由', data: '/申诉报告 ', type: 'input' },
         ])
       }
       buttons.push([

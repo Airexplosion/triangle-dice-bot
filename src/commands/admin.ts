@@ -126,7 +126,7 @@ export function registerAdminCommands(ctx: Context, deps: AdminDeps): void {
       ])
     } else {
       buttons.push([
-        { label: '填写任务绑定码', data: '开始任务 ', type: 'input' },
+        { label: '填写任务绑定码', data: '/开始任务 ', type: 'input' },
         { label: '独立任务模式', data: '/开始任务 不使用', type: 'input', enter: true },
       ])
     }

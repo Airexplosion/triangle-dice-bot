@@ -106,7 +106,7 @@ export function registerBindCommands(ctx: Context, deps: BindDeps): void {
         )
       }
       await reply(session, deps, '> 已解除 QQ 绑定。', [
-        [{ label: '重新填写绑定码', data: '绑定 ', type: 'input' }],
+        [{ label: '重新填写绑定码', data: '/绑定 ', type: 'input' }],
       ])
     }),
   )
@@ -122,7 +122,7 @@ export function registerBindCommands(ctx: Context, deps: BindDeps): void {
       if (!r) return reply(session, deps, NETWORK_ERROR_BLOCK)
       if (!r.bound) {
         const buttons: QQButton[][] = [
-          [{ label: '我已生成绑定码', data: '绑定 ', type: 'input' }],
+          [{ label: '我已生成绑定码', data: '/绑定 ', type: 'input' }],
         ]
         return reply(
           session,

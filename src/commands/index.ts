@@ -169,7 +169,7 @@ export function registerCommands(ctx: Context, deps: CommandDeps): void {
       ])
     } else {
       buttons.push([
-        { label: '填写绑定码', data: '绑定 ', type: 'input' },
+        { label: '填写绑定码', data: '/绑定 ', type: 'input' },
         { label: '查询绑定', data: '/查询绑定', type: 'input', enter: true },
       ])
     }
@@ -183,7 +183,7 @@ export function registerCommands(ctx: Context, deps: CommandDeps): void {
         buttons.push(taskRow)
       } else if (admin) {
         buttons.push([
-          { label: '填写任务绑定码', data: '开始任务 ', type: 'input' },
+          { label: '填写任务绑定码', data: '/开始任务 ', type: 'input' },
           { label: '独立任务模式', data: '/开始任务 不使用', type: 'input', enter: true },
         ])
       }

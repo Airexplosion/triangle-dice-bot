@@ -42,7 +42,7 @@ export async function requireBound(
   }
   if (!r.bound) {
     const buttons: QQButton[][] = [
-      [{ label: '我已生成绑定码', data: '绑定 ', type: 'input' }],
+      [{ label: '我已生成绑定码', data: '/绑定 ', type: 'input' }],
     ]
     await reply(
       session,
@@ -93,7 +93,7 @@ export async function requireMissionBound(
   }
   if (!r.bound) {
     const buttons: QQButton[][] = [
-      [{ label: '我已生成任务绑定码', data: '开始任务 ', type: 'input' }],
+      [{ label: '我已生成任务绑定码', data: '/开始任务 ', type: 'input' }],
     ]
     await reply(
       session,
