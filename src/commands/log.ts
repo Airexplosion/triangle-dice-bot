@@ -70,6 +70,38 @@ export function registerLogCommands(ctx: Context, deps: LogDeps): void {
     return next()
   })
 
+  // ── 捕获 3：外部 OneBot 桥(red)经转接层发出的消息 —— 全局钩子 ──
+  // red 的回复走 bridge 的 bot.internal.sendMessage，绕过 sendQQMarkdown 钩子，
+  // 这里暴露一个全局函数供 koishi-plugin-onebot-bridge 调用，把 red 的骰点结果记进日志。
+  // roomId 约定 `qq:${group_openid}`（见 room.ts roomIdOf）；kind 默认 bot。
+  ;(globalThis as Record<string, unknown>).__triangleLogRecordExternal = (
+    roomId: string,
+    extName: string,
+    content: string,
+    kind?: string,
+  ): boolean => {
+    try {
+      if (!roomId) return false
+      const logId = store.recordingLogId(roomId)
+      if (logId === undefined) return false
+      const text = stripMarkdown(String(content ?? ''))
+      if (!text) return false
+      void store
+        .appendLine({
+          logId,
+          time: new Date(),
+          senderId: 'onebot',
+          senderName: extName || '红',
+          kind: (kind || 'bot') as 'bot',
+          content: text,
+        })
+        .catch(() => {})
+      return true
+    } catch {
+      return false
+    }
+  }
+
   // ── /log 命令 ──
   ctx.command('log [sub:string] [arg:text]', '跑团日志记录').action(
     async ({ session }, sub, arg) => {
@@ -110,7 +142,7 @@ export function registerLogCommands(ctx: Context, deps: LogDeps): void {
           return reply(
             session,
             deps,
-            [`# 📓 日志已开始`, '', `名称　**${logName}**`, '', '此后本群发言与骰点都会被记录。', '`/log off` 暂停 · `/log end` 结束并出链接'].join('\n'),
+            [`# 日志已开始`, '', `名称　**${logName}**`, '', '此后本群发言与骰点都会被记录。', '`/log off` 暂停 · `/log end` 结束并出链接'].join('\n'),
             logButtons('recording'),
           )
         }
@@ -122,7 +154,7 @@ export function registerLogCommands(ctx: Context, deps: LogDeps): void {
           if (!forced && messagesClosed()) return warnMessagesClosed(session, deps, 'on', name)
           const r = await store.resume(roomId, name || undefined)
           if (!r.ok) return reply(session, deps, `> ${r.reason}`)
-          return reply(session, deps, `> ▶️ 已开始记录日志「${r.row?.name}」。`, logButtons('recording'))
+          return reply(session, deps, `> 已开始记录日志「${r.row?.name}」。`, logButtons('recording'))
         }
 
         case 'off':
@@ -133,7 +165,7 @@ export function registerLogCommands(ctx: Context, deps: LogDeps): void {
           return reply(
             session,
             deps,
-            `> ⏸️ 已暂停日志「${row.name}」。`,
+            `> 已暂停日志「${row.name}」。`,
             logButtons('paused'),
           )
         }
@@ -161,14 +193,14 @@ export function registerLogCommands(ctx: Context, deps: LogDeps): void {
             return reply(
               session,
               deps,
-              `> ⏹️ 日志「${row.name}」已结束，但上传染色页失败（网络/服务）。可稍后 \`/log get ${row.name}\` 重试。`,
+              `> 日志「${row.name}」已结束，但上传染色页失败（网络/服务）。可稍后 \`/log get ${row.name}\` 重试。`,
               logButtons('inactive'),
             )
           }
           return reply(
             session,
             deps,
-            [`# ⏹️ 日志已结束`, '', `名称　**${row.name}**`, '', `染色回放：`, link].join('\n'),
+            [`# 日志已结束`, '', `名称　**${row.name}**`, '', `染色回放：`, link].join('\n'),
             logButtons('inactive'),
           )
         }
@@ -187,7 +219,7 @@ export function registerLogCommands(ctx: Context, deps: LogDeps): void {
             return reply(
               session,
               deps,
-              [`# 📓 ${row.name}`, '', `染色回放：`, row.url].join('\n'),
+              [`# ${row.name}`, '', `染色回放：`, row.url].join('\n'),
               [[
                 { label: '日志列表', data: '/log list', type: 'input', enter: true },
                 { label: '操作菜单', data: '/菜单', type: 'input', enter: true },
@@ -196,7 +228,7 @@ export function registerLogCommands(ctx: Context, deps: LogDeps): void {
           }
           const link = await uploadAndLink(deps, groupId, row)
           if (!link) return reply(session, deps, NETWORK_ERROR_BLOCK)
-          return reply(session, deps, [`# 📓 ${row.name}`, '', `染色回放：`, link].join('\n'), [[
+          return reply(session, deps, [`# ${row.name}`, '', `染色回放：`, link].join('\n'), [[
             { label: '日志列表', data: '/log list', type: 'input', enter: true },
             { label: '操作菜单', data: '/菜单', type: 'input', enter: true },
           ]])
@@ -206,7 +238,7 @@ export function registerLogCommands(ctx: Context, deps: LogDeps): void {
         case '列表': {
           const all = await store.list(roomId)
           if (!all.length) return reply(session, deps, '> 本群还没有任何日志。', logButtons('inactive'))
-          const lines = ['# 📚 本群日志', '']
+          const lines = ['# 本群日志', '']
           for (const r of all.slice(0, 15)) {
             lines.push(`· **${r.name}**　${statusLabel(r.status)}${r.url ? ' · 有链接' : ''}`)
           }
@@ -220,7 +252,7 @@ export function registerLogCommands(ctx: Context, deps: LogDeps): void {
         case '删除': {
           if (!name) return reply(session, deps, '> 用法：`/log del <日志名>`')
           const ok = await store.remove(roomId, name)
-          return reply(session, deps, ok ? `> 🗑️ 已删除日志「${name}」。` : `> 没找到名为「${name}」的日志。`)
+          return reply(session, deps, ok ? `> 已删除日志「${name}」。` : `> 没找到名为「${name}」的日志。`)
         }
 
         default:
@@ -270,7 +302,7 @@ async function showStatus(session: Session, deps: LogDeps, roomId: string): Prom
     session,
     deps,
     [
-      `# 📓 当前日志`,
+      `# 当前日志`,
       '',
       `名称　**${cur.name}**`,
       `状态　**${statusLabel(cur.status)}**`,
@@ -306,7 +338,7 @@ function logButtons(status: 'recording' | 'paused' | 'ended' | 'inactive'): QQBu
 
 function helpText(): string {
   return [
-    '# 📓 跑团日志',
+    '# 跑团日志',
     '',
     '`/log new [名]`　新建并开始记录',
     '`/log on [名]`　开始 / 续记',
@@ -420,7 +452,7 @@ function warnMessagesClosed(
     session,
     deps,
     [
-      '# ⚠️ 暂时无法开始日志',
+      '# 暂时无法开始日志',
       '',
       '检测到本群**可能未开启「消息全部开放」**。',
       '',
