@@ -1,9 +1,30 @@
 import type { Context, Session } from 'koishi'
 import { rawRoomIdOf, roomIdOf } from '../room'
-import type { LogStore, TriangleLogRow } from '../service/log-store'
+import type { LineKind, LogStore, TriangleLogRow } from '../service/log-store'
 import type { WebClient } from '../service/web-client'
 import { NETWORK_ERROR_BLOCK } from '../util/messages'
 import { sendQQMarkdown, setBotMessageHook, type QQButton } from '../util/qq-markdown'
+
+/**
+ * 外部转接层（onebot-bridge）补记日志的回调签名。
+ * 返回 true = 已写入；false = 该房间未在录制 / 内容为空 / 写入失败。
+ */
+export type ExternalLogRecorder = (
+  roomId: string,
+  extName: string,
+  content: string,
+  kind?: LineKind,
+) => boolean
+
+declare global {
+  /**
+   * 由本插件注册、供 koishi-plugin-onebot-bridge 调用的全局钩子。
+   * 桥接层是 `typeof rec === 'function'` 的软判断，未注册时静默跳过 ——
+   * 正因如此，它失效时不会报错，只是日志里悄悄少了骰点结果。
+   */
+  // eslint-disable-next-line no-var
+  var __triangleLogRecordExternal: ExternalLogRecorder | undefined
+}
 
 export interface LogDeps {
   store: LogStore
@@ -25,6 +46,44 @@ export interface LogDeps {
  * 记录范围：日志录制期间群内所有发言 + 机器人回复（含骰点结果）。
  * 权限：群内任何人（跑团惯例）。
  */
+/**
+ * 构造「外部日志记录器」。
+ *
+ * 外部 OneBot 桥（red）的回复走 bridge 里的 `bot.internal.sendMessage`，绕过了
+ * `sendQQMarkdown`，所以捕获 1 的钩子拿不到它们（`.rd` 就属于这一类：指令被转发
+ * 给外部骰子服务，结果再由 bridge 直接发出）。bridge 转而调用本函数产出的全局钩子，
+ * 把结果补记进跑团日志。
+ *
+ * 抽成独立工厂函数（而非内联在 registerLogCommands 里）是为了能在不 mock 整个
+ * Context 的前提下做单元测试 —— 见 tests/external-log.test.ts。该测试同时盯住
+ * 「注册」那一步：这段逻辑此前只存在于 lib/ 的编译产物中，源码里并没有，
+ * 一次 `npm run build` 就被 tsc 覆盖，导致骰点结果长期静默不入日志。
+ */
+export function createExternalLogRecorder(store: LogStore): ExternalLogRecorder {
+  return (roomId, extName, content, kind = 'bot') => {
+    try {
+      if (!roomId) return false
+      const logId = store.recordingLogId(roomId)
+      if (logId === undefined) return false
+      const text = stripMarkdown(String(content ?? ''))
+      if (!text) return false
+      void store
+        .appendLine({
+          logId,
+          time: new Date(),
+          senderId: 'onebot',
+          senderName: extName || '红',
+          kind,
+          content: text,
+        })
+        .catch(() => {})
+      return true
+    } catch {
+      return false
+    }
+  }
+}
+
 export function registerLogCommands(ctx: Context, deps: LogDeps): void {
   const { store } = deps
 
@@ -43,6 +102,17 @@ export function registerLogCommands(ctx: Context, deps: LogDeps): void {
         content: stripMarkdown(content),
       })
       .catch(() => {})
+  })
+
+  // ── 捕获 3：外部 OneBot 桥（red）发出的消息 —— 全局钩子 ──
+  // roomId 约定 `qq:${group_openid}`，与 room.ts 的 roomIdOf 输出一致。
+  const externalRecorder = createExternalLogRecorder(store)
+  globalThis.__triangleLogRecordExternal = externalRecorder
+  ctx.on('dispose', () => {
+    // 插件卸载/热重载时撤下钩子，避免桥接层继续往已销毁的 store 写
+    if (globalThis.__triangleLogRecordExternal === externalRecorder) {
+      globalThis.__triangleLogRecordExternal = undefined
+    }
   })
 
   // ── 捕获 2：群内人类发言 —— 中间件 ──
@@ -69,38 +139,6 @@ export function registerLogCommands(ctx: Context, deps: LogDeps): void {
     }
     return next()
   })
-
-  // ── 捕获 3：外部 OneBot 桥(red)经转接层发出的消息 —— 全局钩子 ──
-  // red 的回复走 bridge 的 bot.internal.sendMessage，绕过 sendQQMarkdown 钩子，
-  // 这里暴露一个全局函数供 koishi-plugin-onebot-bridge 调用，把 red 的骰点结果记进日志。
-  // roomId 约定 `qq:${group_openid}`（见 room.ts roomIdOf）；kind 默认 bot。
-  ;(globalThis as Record<string, unknown>).__triangleLogRecordExternal = (
-    roomId: string,
-    extName: string,
-    content: string,
-    kind?: string,
-  ): boolean => {
-    try {
-      if (!roomId) return false
-      const logId = store.recordingLogId(roomId)
-      if (logId === undefined) return false
-      const text = stripMarkdown(String(content ?? ''))
-      if (!text) return false
-      void store
-        .appendLine({
-          logId,
-          time: new Date(),
-          senderId: 'onebot',
-          senderName: extName || '红',
-          kind: (kind || 'bot') as 'bot',
-          content: text,
-        })
-        .catch(() => {})
-      return true
-    } catch {
-      return false
-    }
-  }
 
   // ── /log 命令 ──
   ctx.command('log [sub:string] [arg:text]', '跑团日志记录').action(

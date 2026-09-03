@@ -106,11 +106,16 @@ const D8_TRIBUTES: Record<number, string> = {
  *   其它 / 未给    — 调用方负责决定要不要弹选项面板
  */
 const EXPLICIT_DICE_MODES = new Set(['d4', 'd6', 'd10', 'd10d6', 'nod6'])
+/** 「无视过载」标志词（现实修改专用）。可写在资质名前或后。 */
+const IGNORE_BURNOUT_WORDS = new Set(['无视过载', '无视燃尽', 'ignore'])
+
 interface DiceChoice {
   useD6: boolean
   useD10: boolean
   /** G3 解锁后 现实修改 强制摇 d8（异常能力 永远不摇）。 */
   useD8: boolean
+  /** 「无视过载」：本次骰点过载（燃尽）归零，混沌与失败计数照常。仅 现实修改 有效。 */
+  ignoreBurnout?: boolean
 }
 function parseDiceMode(mode: string | undefined): DiceChoice | null {
   if (!mode || !EXPLICIT_DICE_MODES.has(mode)) return null
@@ -134,9 +139,17 @@ export const TRIPLE_SUBLIMATION_IMG =
 
 export function registerRollCommands(ctx: Context, deps: RollDeps): void {
   ctx
-    .command('现实修改 [aptitude:string]', '使用现实修改触发骰点')
-    .action(async ({ session }, aptitude) => {
+    .command('现实修改 [aptitude:string] [flag:string]', '使用现实修改触发骰点（可加 无视过载）')
+    .action(async ({ session }, aptitude, flag) => {
       if (!session) return
+      // 「无视过载」：本次骰点不计任何过载（燃尽），混沌 / 失败计数照常。可写在资质前或后。
+      let ignoreBurnout = false
+      if (aptitude && IGNORE_BURNOUT_WORDS.has(aptitude)) {
+        ignoreBurnout = true
+        aptitude = flag
+      } else if (flag && IGNORE_BURNOUT_WORDS.has(flag)) {
+        ignoreBurnout = true
+      }
       // 归档拦截 + G3 解锁判定（合用一次 getDiceUnlocks）
       let useD8 = false
       if (!session.isDirect && deps.web && session.userId) {
@@ -151,6 +164,7 @@ export function registerRollCommands(ctx: Context, deps: RollDeps): void {
         useD6: false,
         useD10: false,
         useD8,
+        ignoreBurnout,
       })
     })
 
@@ -653,13 +667,18 @@ async function handle(
     await reply(session, deps, '> 私聊不支持骰点命令。')
     return
   }
+  // 「无视过载」标志要随九宫格按钮的 data 往返，否则点完按钮标志就丢了
+  const ignoreBurnoutSel = trigger === '现实修改' && !!diceChoice.ignoreBurnout
+
   if (!aptName) {
     // 不带资质名 → 给九宫格按钮，让玩家点选
     await reply(
       session,
       deps,
-      `# ${trigger}\n\n请选择资质：`,
-      buildAptitudeGrid(trigger),
+      ignoreBurnoutSel
+        ? `# ${trigger}（无视过载）\n\n> 本次骰点不计过载，混沌与失败计数照常记录。\n\n请选择资质：`
+        : `# ${trigger}\n\n请选择资质：`,
+      buildAptitudeGrid(trigger, ignoreBurnoutSel),
     )
     return
   }
@@ -668,7 +687,7 @@ async function handle(
       session,
       deps,
       `> 未知资质 **${aptName}**\n请从下方选择：`,
-      buildAptitudeGrid(trigger),
+      buildAptitudeGrid(trigger, ignoreBurnoutSel),
     )
     return
   }
@@ -722,7 +741,10 @@ async function handle(
     const aptValue = player.aptitudes[aptName] ?? 0
     const zeroPenalty = aptValue === 0 ? 1 : 0
     const fcBefore = room.failureCount
-    const burnout = isReality ? fcBefore + zeroPenalty : zeroPenalty
+    const burnoutRaw = isReality ? fcBefore + zeroPenalty : zeroPenalty
+    // 「无视过载」：本次全部过载（失败计数 + 资质补正）归零；混沌 / 失败计数逻辑不变
+    const ignoreBurnout = isReality && !!diceChoice.ignoreBurnout
+    const burnout = ignoreBurnout ? 0 : burnoutRaw
 
     // d6 / d10 仅在 异常能力 + 用户选择时摇；d8 仅在 现实修改 + G3 解锁时摇
     const d6Roll: number | null =
@@ -836,6 +858,8 @@ async function handle(
       failureIncremented,
       fcBefore,
       zeroPenalty,
+      ignoreBurnout,
+      burnoutRaw,
       isReality,
       isMember,
       d6Roll,
@@ -891,6 +915,10 @@ interface RollResult {
   failureIncremented: boolean
   fcBefore: number
   zeroPenalty: number
+  /** 本次是否启用了「无视过载」（burnout 被强制归零）。 */
+  ignoreBurnout: boolean
+  /** 归零前的原始过载值，用于在结果里说明"本应多少"。 */
+  burnoutRaw: number
   isReality: boolean
   isMember: boolean
   /** 规则破坏者：null = 未投，1-6 = 本次摇出的 d6 */
@@ -914,17 +942,25 @@ export function formatDice(dice: readonly number[]): string {
 }
 
 /** 九宫格资质按钮（3x3），每个 callback 触发对应触发器 + 资质的骰点。*/
-function buildAptitudeGrid(trigger: Trigger): QQButton[][] {
+function buildAptitudeGrid(trigger: Trigger, ignoreBurnout = false): QQButton[][] {
   const rows: QQButton[][] = []
+  // 标志拼进按钮 data，点选资质后才能把「无视过载」带回命令
+  const suffix = ignoreBurnout ? ' 无视过载' : ''
   for (let i = 0; i < APTITUDE_NAMES.length; i += 3) {
     rows.push(
       APTITUDE_NAMES.slice(i, i + 3).map((name) => ({
         label: name,
-        data: `/${trigger} ${name}`,
+        data: `/${trigger} ${name}${suffix}`,
         type: 'input' as const,
         enter: true,
       })),
     )
+  }
+  // 现实修改：骰前多一个「无视过载」入口（过载解除等场景），点后重出一版带标志的九宫格
+  if (trigger === '现实修改' && !ignoreBurnout) {
+    rows.push([
+      { label: '无视过载后骰点', data: '/现实修改 无视过载', type: 'input' as const, enter: true },
+    ])
   }
   return rows
 }
@@ -953,7 +989,7 @@ function mapWebAttrsToAptitudes(
 
 function renderRollResult(r: RollResult): string {
   const lines: string[] = []
-  lines.push(`# ${r.trigger} · ${r.aptName}`)
+  lines.push(`# ${r.trigger} · ${r.aptName}${r.ignoreBurnout ? '（无视过载）' : ''}`)
   // 三重升华专属横幅图：标题正下方（d10 模式不可三重升华，rawTriple 恒 false，自然不显示）
   if (r.rawTriple) {
     lines.push('')
@@ -1011,7 +1047,11 @@ function renderRollResult(r: RollResult): string {
       }
     }
 
-    if (r.burnout > 0 || r.isReality) {
+    if (r.ignoreBurnout) {
+      lines.push(
+        `过载　**已无视**（本应 ${r.burnoutRaw}：失败计数 ${r.fcBefore} + 资质补正 ${r.zeroPenalty}）`,
+      )
+    } else if (r.burnout > 0 || r.isReality) {
       const parts: string[] = []
       if (r.isReality) parts.push(`失败计数 ${r.fcBefore}`)
       parts.push(`资质补正 ${r.zeroPenalty}`)
