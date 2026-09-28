@@ -31,7 +31,7 @@ import {
 } from '../service/sync'
 import type { WebClient } from '../service/web-client'
 import { isMissionMember } from '../util/mission'
-import { DEFAULT_D8_TRIBUTES, normalizeD8Tributes, type D8Tributes } from '../game/d8'
+import { DEFAULT_D8_TRIBUTES, normalizeD8Tributes, resolveD8Use, type D8Tributes } from '../game/d8'
 
 /** 从高墙文件名提取代码前缀，匹配 web 端 getFileCode：
  *    "U2.md" → "U2"，"U2 规则破坏者.md" → "U2"，大小写归一。 */
@@ -64,8 +64,8 @@ async function getDiceUnlocks(
   ctx: Context,
   deps: RollDeps,
   session: import('koishi').Session,
-): Promise<{ u2: boolean; n1: boolean; g3: boolean; t3: boolean; archived: boolean }> {
-  const none = { u2: false, n1: false, g3: false, t3: false, archived: false }
+): Promise<{ u2: boolean; n1: boolean; g3: boolean; t3: boolean; archived: boolean; bound: boolean }> {
+  const none = { u2: false, n1: false, g3: false, t3: false, archived: false, bound: false }
   if (!deps.web || !session.userId) return none
   try {
     const groupId = session.isDirect ? undefined : rawRoomIdOf(session) ?? undefined
@@ -78,6 +78,7 @@ async function getDiceUnlocks(
       g3: codes.has('G3'),
       t3: codes.has('T3'),
       archived: false,
+      bound: true,
     }
   } catch (e) {
     ctx.logger('triangle').warn('getDiceUnlocks failed: %s', (e as Error).message ?? e)
@@ -150,7 +151,7 @@ export function registerRollCommands(ctx: Context, deps: RollDeps): void {
         await reply(session, deps, '> 现实修改仅支持 `d8`（或省略骰面参数）。')
         return
       }
-      // 归档拦截 + G3 解锁判定。D8 改为显式命令触发，不再因 G3 自动投掷。
+      // 归档拦截 + G3 解锁判定：G3 静默带 D8；显式 d8 不要求 G3。
       let diceChoice: DiceChoice = { useD6: false, useD10: false, useD8: false }
       diceChoice.ignoreBurnout = ignoreBurnout
       if (!session.isDirect && deps.web && session.userId) {
@@ -159,17 +160,24 @@ export function registerRollCommands(ctx: Context, deps: RollDeps): void {
           await reply(session, deps, '> 该角色卡已归档，机器人无法对其进行骰点 / 操作。')
           return
         }
-        if (explicit?.useD8) {
-          if (!unlocks.g3) {
-            await reply(session, deps, '> 需要解锁 G3 高墙后才能使用 d8 赞助骰。')
+        const useD8 = resolveD8Use(unlocks.g3, !!explicit?.useD8)
+        if (useD8) {
+          if (explicit?.useD8 && !unlocks.bound) {
+            await reply(session, deps, '> 请先绑定角色卡后再使用 d8 赞助骰。')
             return
           }
-          diceChoice = explicit
-          const labels = await deps.web.getD8SponsorLabels(rawRoomIdOf(session) ?? '')
+          diceChoice = {
+            useD6: false,
+            useD10: false,
+            useD8: true,
+            ignoreBurnout,
+          }
+          const groupId = rawRoomIdOf(session)
+          const labels = groupId ? await deps.web.getD8SponsorLabels(groupId) : null
           diceChoice.d8Tributes = normalizeD8Tributes(labels?.labels ?? DEFAULT_D8_TRIBUTES)
         }
       } else if (explicit?.useD8) {
-        await reply(session, deps, '> 暂时无法验证 G3 高墙，不能使用 d8 赞助骰。')
+        await reply(session, deps, '> 暂时无法验证角色卡绑定状态，不能使用 d8 赞助骰。')
         return
       }
       return handle(ctx, deps, session, '现实修改', aptitude, diceChoice)

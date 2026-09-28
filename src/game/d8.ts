@@ -12,6 +12,11 @@ export const DEFAULT_D8_TRIBUTES: Record<number, string> = {
 
 export type D8Tributes = Record<number, string>
 
+/** G3 默认静默带 D8；显式 d8 不再要求 G3。 */
+export function resolveD8Use(g3Unlocked: boolean, explicitD8: boolean): boolean {
+  return g3Unlocked || explicitD8
+}
+
 export function normalizeD8Tributes(value: unknown): D8Tributes {
   const source = value && typeof value === 'object' ? value as Record<string, unknown> : {}
   const result: D8Tributes = {}

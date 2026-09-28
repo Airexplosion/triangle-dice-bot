@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { DEFAULT_D8_TRIBUTES, normalizeD8Tributes } from '../src/game/d8'
+import { DEFAULT_D8_TRIBUTES, normalizeD8Tributes, resolveD8Use } from '../src/game/d8'
 import { parseDiceMode } from '../src/commands/roll'
 
 describe('D8 sponsor tribute configuration', () => {
@@ -20,5 +20,11 @@ describe('D8 sponsor tribute configuration', () => {
   it('accepts an explicit d8 mode, including uppercase input', () => {
     expect(parseDiceMode('D8')).toMatchObject({ useD8: true, useD6: false, useD10: false })
     expect(parseDiceMode('d10')?.useD8).toBe(false)
+  })
+
+  it('automatically uses d8 for G3, while explicit d8 bypasses the G3 gate', () => {
+    expect(resolveD8Use(true, false)).toBe(true)
+    expect(resolveD8Use(false, true)).toBe(true)
+    expect(resolveD8Use(false, false)).toBe(false)
   })
 })
