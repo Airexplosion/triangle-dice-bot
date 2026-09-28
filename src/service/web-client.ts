@@ -190,6 +190,10 @@ export class WebClient {
     return this.getJson('/api/bot/mission-status', { qqGroupOpenid })
   }
 
+  getD8SponsorLabels(qqGroupOpenid: string): Promise<D8SponsorLabelsResp | null> {
+    return this.getJson('/api/bot/d8-sponsor-labels', { qqGroupOpenid })
+  }
+
   getCharacters(
     qqOpenid: string,
     qqGroupOpenid?: string,
@@ -662,6 +666,13 @@ export interface CharacterHighWallsResp {
   error?: string
   /** 角色卡已归档（机器人不可操作）。 */
   archived?: boolean
+}
+
+export interface D8SponsorLabelsResp {
+  success: boolean
+  branchId?: string | null
+  labels?: Record<string, string>
+  error?: string
 }
 
 // ─── 超管审核 ────────────────────────────────────────────────────

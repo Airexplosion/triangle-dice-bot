@@ -31,6 +31,7 @@ import {
 } from '../service/sync'
 import type { WebClient } from '../service/web-client'
 import { isMissionMember } from '../util/mission'
+import { DEFAULT_D8_TRIBUTES, normalizeD8Tributes, type D8Tributes } from '../game/d8'
 
 /** 从高墙文件名提取代码前缀，匹配 web 端 getFileCode：
  *    "U2.md" → "U2"，"U2 规则破坏者.md" → "U2"，大小写归一。 */
@@ -84,18 +85,6 @@ async function getDiceUnlocks(
   }
 }
 
-/** d8 各面对应的"赞助商致敬"文本（图源规则书）。 */
-const D8_TRIBUTES: Record<number, string> = {
-  1: '引用一件恰好在当前时刻前 40 小时发生于目标或地点之上、并影响此因果链的事物',
-  2: '引用一件发生在另一个国家、并影响此因果链的事物',
-  3: '一个 3（可在下方选择 计入 / 减去 / 忽略）',
-  4: '引用一种因接触虚构作品而影响此因果链的方式',
-  5: '引用一种"湿嘴"牌口香糖与膳食补充剂影响此因果链的方式（请务必包含确切的措辞！）',
-  6: '两个 3（可在下方选择 计入 / 减去 / 忽略）',
-  7: '在因果链中包含一样蓝色的东西',
-  8: '引用一次影响此因果链的背叛',
-}
-
 /**
  * diceMode 解析：
  *   'd4'           — 6 颗 d4（默认/不带额外骰）
@@ -105,24 +94,25 @@ const D8_TRIBUTES: Record<number, string> = {
  *   'nod6'         — 旧 alias，同 'd4'（避免破坏 U2 早期发出的按钮）
  *   其它 / 未给    — 调用方负责决定要不要弹选项面板
  */
-const EXPLICIT_DICE_MODES = new Set(['d4', 'd6', 'd10', 'd10d6', 'nod6'])
+const EXPLICIT_DICE_MODES = new Set(['d4', 'd6', 'd10', 'd10d6', 'd8', 'nod6'])
 /** 「无视过载」标志词（现实修改专用）。可写在资质名前或后。 */
 const IGNORE_BURNOUT_WORDS = new Set(['无视过载', '无视燃尽', 'ignore'])
-
 interface DiceChoice {
   useD6: boolean
   useD10: boolean
-  /** G3 解锁后 现实修改 强制摇 d8（异常能力 永远不摇）。 */
+  /** G3 解锁后，现实修改显式指定 d8 时摇赞助骰。 */
   useD8: boolean
   /** 「无视过载」：本次骰点过载（燃尽）归零，混沌与失败计数照常。仅 现实修改 有效。 */
   ignoreBurnout?: boolean
+  d8Tributes?: D8Tributes
 }
-function parseDiceMode(mode: string | undefined): DiceChoice | null {
-  if (!mode || !EXPLICIT_DICE_MODES.has(mode)) return null
+export function parseDiceMode(mode: string | undefined): DiceChoice | null {
+  const normalized = mode?.trim().toLowerCase()
+  if (!normalized || !EXPLICIT_DICE_MODES.has(normalized)) return null
   return {
-    useD6: mode === 'd6' || mode === 'd10d6',
-    useD10: mode === 'd10' || mode === 'd10d6',
-    useD8: false, // d8 与 异常能力 选骰面板无关；现实修改 单独判断
+    useD6: normalized === 'd6' || normalized === 'd10d6',
+    useD10: normalized === 'd10' || normalized === 'd10d6',
+    useD8: normalized === 'd8',
   }
 }
 
@@ -139,33 +129,50 @@ export const TRIPLE_SUBLIMATION_IMG =
 
 export function registerRollCommands(ctx: Context, deps: RollDeps): void {
   ctx
-    .command('现实修改 [aptitude:string] [flag:string]', '使用现实修改触发骰点（可加 无视过载）')
-    .action(async ({ session }, aptitude, flag) => {
+    .command('现实修改 [aptitude:string] [diceMode:string] [flag:string]', '使用现实修改触发骰点（可加 d8 / 无视过载）')
+    .action(async ({ session }, aptitude, diceMode, flag) => {
       if (!session) return
       // 「无视过载」：本次骰点不计任何过载（燃尽），混沌 / 失败计数照常。可写在资质前或后。
       let ignoreBurnout = false
       if (aptitude && IGNORE_BURNOUT_WORDS.has(aptitude)) {
         ignoreBurnout = true
-        aptitude = flag
+        aptitude = diceMode
+        diceMode = flag
+      } else if (diceMode && IGNORE_BURNOUT_WORDS.has(diceMode)) {
+        ignoreBurnout = true
+        diceMode = flag
       } else if (flag && IGNORE_BURNOUT_WORDS.has(flag)) {
         ignoreBurnout = true
       }
-      // 归档拦截 + G3 解锁判定（合用一次 getDiceUnlocks）
-      let useD8 = false
+      const mode = diceMode?.trim().toLowerCase()
+      const explicit = parseDiceMode(mode)
+      if (mode && !explicit) {
+        await reply(session, deps, '> 现实修改仅支持 `d8`（或省略骰面参数）。')
+        return
+      }
+      // 归档拦截 + G3 解锁判定。D8 改为显式命令触发，不再因 G3 自动投掷。
+      let diceChoice: DiceChoice = { useD6: false, useD10: false, useD8: false }
+      diceChoice.ignoreBurnout = ignoreBurnout
       if (!session.isDirect && deps.web && session.userId) {
         const unlocks = await getDiceUnlocks(ctx, deps, session)
         if (unlocks.archived) {
           await reply(session, deps, '> 该角色卡已归档，机器人无法对其进行骰点 / 操作。')
           return
         }
-        useD8 = unlocks.g3
+        if (explicit?.useD8) {
+          if (!unlocks.g3) {
+            await reply(session, deps, '> 需要解锁 G3 高墙后才能使用 d8 赞助骰。')
+            return
+          }
+          diceChoice = explicit
+          const labels = await deps.web.getD8SponsorLabels(rawRoomIdOf(session) ?? '')
+          diceChoice.d8Tributes = normalizeD8Tributes(labels?.labels ?? DEFAULT_D8_TRIBUTES)
+        }
+      } else if (explicit?.useD8) {
+        await reply(session, deps, '> 暂时无法验证 G3 高墙，不能使用 d8 赞助骰。')
+        return
       }
-      return handle(ctx, deps, session, '现实修改', aptitude, {
-        useD6: false,
-        useD10: false,
-        useD8,
-        ignoreBurnout,
-      })
+      return handle(ctx, deps, session, '现实修改', aptitude, diceChoice)
     })
 
   ctx
@@ -658,7 +665,7 @@ async function handle(
   session: import('koishi').Session | undefined,
   trigger: Trigger,
   aptName: string | undefined,
-  /** 异常能力：U2/N1 玩家面板上选；现实修改：G3 解锁则 useD8 强制 true。 */
+  /** 异常能力：U2/N1 玩家面板上选；现实修改：仅显式 d8 才投掷赞助骰。 */
   diceChoice: DiceChoice = { useD6: false, useD10: false, useD8: false },
 ): Promise<void> {
   if (!session) return
@@ -746,7 +753,7 @@ async function handle(
     const ignoreBurnout = isReality && !!diceChoice.ignoreBurnout
     const burnout = ignoreBurnout ? 0 : burnoutRaw
 
-    // d6 / d10 仅在 异常能力 + 用户选择时摇；d8 仅在 现实修改 + G3 解锁时摇
+    // d6 / d10 仅在 异常能力 + 用户选择时摇；d8 仅在 现实修改 + 显式 d8 时摇
     const d6Roll: number | null =
       trigger === '异常能力' && diceChoice.useD6 ? rollD6() : null
     const d10Roll: number | null =
@@ -867,6 +874,7 @@ async function handle(
       d10ThreesAfterBurnout,
       d10Failure,
       d8Roll,
+      d8Tributes: normalizeD8Tributes(diceChoice.d8Tributes),
       d8Delta,
       unleash,
     }
@@ -931,6 +939,8 @@ interface RollResult {
   d10Failure: boolean
   /** 赞助骰：null = 未投，1-8 = 本次摇出的 d8 */
   d8Roll: number | null
+  /** 本次骰点使用的分部 D8 文案 */
+  d8Tributes: D8Tributes
   /** d8 带符号的 3 数贡献（已 clamp，+2/+1/0/-1/-2） */
   d8Delta: number
   /** UNL3ASH：恰好 7 个 3（仅异常能力），在任何后修改前判定 */
@@ -1039,7 +1049,7 @@ function renderRollResult(r: RollResult): string {
     if (r.d6Roll !== null) lines.push(renderD6Line(r.d6Roll))
     if (r.d8Roll !== null) {
       lines.push(`8 面骰　**${r.d8Roll}**`)
-      const tribute = D8_TRIBUTES[r.d8Roll]
+      const tribute = r.d8Tributes[r.d8Roll]
       if (tribute) lines.push(`> ${tribute}`)
       // 当前 d8 处理状态行
       if (d8ThreeCount(r.d8Roll) > 0) {
